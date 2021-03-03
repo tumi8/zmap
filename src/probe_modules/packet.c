@@ -141,6 +141,7 @@ void make_icmp6_header(struct icmp6_hdr *buf)
 
 void make_icmp_header(struct icmp *buf)
 {
+	memset(buf, 0, sizeof(struct icmp));
 	buf->icmp_type = ICMP_ECHO;
 	buf->icmp_code = 0;
 	buf->icmp_seq = 0;

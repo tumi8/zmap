@@ -32,7 +32,7 @@ static uint8_t **seen = NULL;
 // IPv6
 static int ipv6 = 0;
 
-void handle_packet(uint32_t buflen, const u_char *bytes)
+void handle_packet(uint32_t buflen, const u_char *bytes, const struct timespec ts)
 {
 	struct ip *ip_hdr;
 	uint32_t src_ip;
@@ -112,7 +112,7 @@ void handle_packet(uint32_t buflen, const u_char *bytes)
 		       bytes + zconf.data_link_size, buflen);
 		bytes = fake_eth_hdr;
 	}
-	zconf.probe_module->process_packet(bytes, buflen, fs, validation);
+	zconf.probe_module->process_packet(bytes, buflen, fs, validation, ts);
 	fs_add_system_fields(fs, is_repeat, zsend.complete);
 	int success_index = zconf.fsconf.success_index;
 	assert(success_index < fs->len);
