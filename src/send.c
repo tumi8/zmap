@@ -371,12 +371,6 @@ int send_run(sock_t st, shard_t *s)
 		    zconf.max_runtime <= now() - zsend.start) {
 			goto cleanup;
 		}
-		if (!ipv6 && current_ip == ZMAP_SHARD_DONE) {
-			log_debug("send",
-				  "send thread %hhu finished, shard depleted",
-				  s->thread_id);
-			break;
-		}
 
 		// Actually send a packet.
 		for(int b = 0; b < zconf.batch; b++){
@@ -398,7 +392,7 @@ int send_run(sock_t st, shard_t *s)
 					s->thread_id, s->state.max_packets);
 				goto cleanup;
 			}
-			if (current_ip == ZMAP_SHARD_DONE) {
+			if (!ipv6 && current_ip == ZMAP_SHARD_DONE) {
 				log_debug("send",
 					  "send thread %hhu finished, shard depleted",
 					  s->thread_id);
@@ -482,6 +476,7 @@ int send_run(sock_t st, shard_t *s)
 
 		// IPv6
 		if (ipv6) {
+            s->state.hosts_scanned++;
 			int ret = ipv6_target_file_get_ipv6(&ipv6_dst);
 			if (ret != 0) {
 				log_debug("send", "send thread %hhu finished, no more target IPv6 addresses", s->thread_id);
