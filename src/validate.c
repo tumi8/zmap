@@ -49,6 +49,7 @@ void validate_gen_ipv6(const struct in6_addr *src, const struct in6_addr *dst,
 				uint8_t output[VALIDATE_BYTES])
 {
 	assert(inited);
+    uint32_t aes_input[AES_BLOCK_WORDS];
 	for (int i = 0; i < AES_BLOCK_WORDS; i++) {
 		// XOR IPv6 src and dst
 		aes_input[i] = ((uint32_t *) src)[i] ^ ((uint32_t *) dst)[i];

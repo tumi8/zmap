@@ -464,7 +464,8 @@ int send_run(sock_t st, shard_t *s)
 									    addr_str,
 									    strerror(errno));
 							    }
-						    } else {
+						    }
+                        } else {
 							    any_sends_successful = 1;
 							    break;
 						}
@@ -478,10 +479,6 @@ int send_run(sock_t st, shard_t *s)
 				s->state.packets_sent++;
 			}
 		}
-
-		// Track the number of hosts we actually scanned.
-		s->state.sent++;
-		s->state.tried_sent++;
 
 		// IPv6
 		if (ipv6) {
