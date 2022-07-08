@@ -131,7 +131,7 @@ int quic_initial_init_perthread(void *buf, macaddr_t *src, macaddr_t *gw,
 	return EXIT_SUCCESS;
 }
 
-int quic_initial_make_packet(void *buf, UNUSED size_t *buf_len,
+int quic_initial_make_packet(void *buf, size_t *buf_len,
 			     ipaddr_n_t src_ip, ipaddr_n_t dst_ip,
 			     UNUSED uint8_t ttl, uint32_t *validation,
 			     int probe_num, UNUSED void *arg)
@@ -177,6 +177,9 @@ int quic_initial_make_packet(void *buf, UNUSED size_t *buf_len,
 
 	ip_header->ip_sum = 0;
 	ip_header->ip_sum = zmap_ip_checksum((unsigned short *)ip_header);
+	
+        size_t headers_len = sizeof(struct ether_header) + sizeof(struct ip) + sizeof(struct udphdr);
+        *buf_len = headers_len + payload_len;
 
 	return EXIT_SUCCESS;
 }

@@ -136,7 +136,7 @@ int ipv6_quic_initial_init_perthread(void *buf, macaddr_t *src, macaddr_t *gw,
 	return EXIT_SUCCESS;
 }
 
-int ipv6_quic_initial_make_packet(void *buf, UNUSED size_t *buf_len,
+int ipv6_quic_initial_make_packet(void *buf, size_t *buf_len,
 			     ipaddr_n_t src_ip, ipaddr_n_t dst_ip,
 			     UNUSED uint8_t ttl, uint32_t *validation,
 			     int probe_num, UNUSED void *arg)
@@ -182,7 +182,9 @@ int ipv6_quic_initial_make_packet(void *buf, UNUSED size_t *buf_len,
 	    htons(sizeof(struct udphdr) + payload_len);
 	udp_header->uh_ulen = ntohs(sizeof(struct udphdr) + payload_len);
 
-    udp_header->uh_sum = ipv6_udp_checksum(&ip6_header->ip6_src, &ip6_header->ip6_dst,         udp_header);
+	udp_header->uh_sum = ipv6_udp_checksum(&ip6_header->ip6_src, &ip6_header->ip6_dst,         udp_header);
+	size_t headers_len = sizeof(struct ether_header) + sizeof(struct ip6_hdr) + sizeof(struct udphdr);
+	*buf_len = headers_len + payload_len;
 
 	return EXIT_SUCCESS;
 }
