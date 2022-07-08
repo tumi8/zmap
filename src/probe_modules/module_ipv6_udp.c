@@ -305,6 +305,10 @@ int ipv6_udp_make_packet(void *buf, UNUSED size_t *buf_len, __attribute__((unuse
 	}
 */
 	udp_header->uh_sum = ipv6_udp_checksum(&ip6_header->ip6_src, &ip6_header->ip6_dst, udp_header);
+	
+	size_t headers_len = sizeof(struct ether_header) + sizeof(struct ip6_hdr) +
+			     sizeof(struct udphdr);
+	*buf_len = headers_len + udp_send_msg_len;
 
 	return EXIT_SUCCESS;
 }
@@ -379,6 +383,7 @@ void ipv6_udp_process_packet(const u_char *packet, UNUSED uint32_t len, fieldset
 			fs_add_string(fs, "icmp_unreach_str", (char *) "unknown", 0);
 		}
 */
+		fs_add_null(fs, "icmp_unreach_str");
 		fs_add_null(fs, "udp_pkt_size");
 		fs_add_null(fs, "data");
 	} else {

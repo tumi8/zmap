@@ -75,6 +75,8 @@ int ipv6_synscan_make_packet(void *buf, UNUSED size_t *buf_len, UNUSED ipaddr_n_
 	tcp_header->th_sum = tcp6_checksum(sizeof(struct tcphdr),
 			&ip6_header->ip6_src, &ip6_header->ip6_dst, tcp_header);
 
+	*buf_len = 106;
+
 	return EXIT_SUCCESS;
 }
 

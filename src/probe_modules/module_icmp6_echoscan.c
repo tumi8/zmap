@@ -86,6 +86,10 @@ static int icmp6_echo_make_packet(void *buf, UNUSED size_t *buf_len, UNUSED ipad
 				2*sizeof(uint32_t)
                 );
 
+    size_t ip_len = sizeof(struct ip6_hdr) + 4*sizeof(uint32_t);
+    *buf_len = ip_len + sizeof(struct ether_header);
+
+
 	return EXIT_SUCCESS;
 }
 

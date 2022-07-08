@@ -94,10 +94,10 @@ void fs_add_ipv6_fields(fieldset_t *fs, struct ip6_hdr *ipv6_hdr)
 	fs_add_string(fs, "saddr", make_ipv6_str(&(ipv6_hdr->ip6_src)), 1);
 // TODO FIXME
 //	fs_add_uint64(fs, "saddr-raw", (uint64_t) ip->ip_src.s_addr);
-	fs_add_uint64(fs, "saddr-raw", (uint64_t) 0);
+	fs_add_uint64(fs, "saddr_raw", (uint64_t) 0);
 	fs_add_string(fs, "daddr", make_ipv6_str(&(ipv6_hdr->ip6_dst)), 1);
-//	fs_add_uint64(fs, "daddr-raw", (uint64_t) ip->ip_dst.s_addr);
-	fs_add_uint64(fs, "daddr-raw", (uint64_t) 0);
+//	fs_add_uint64(fs, "daddr_raw", (uint64_t) ip->ip_dst.s_addr);
+	fs_add_uint64(fs, "daddr_raw", (uint64_t) 0);
 //	fs_add_uint64(fs, "ipid", ntohs(ipv6->ip_id));
 	fs_add_uint64(fs, "ipid", 0);
 	fs_add_uint64(fs, "ttl", ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_hlim);
