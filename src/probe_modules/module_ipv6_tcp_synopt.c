@@ -147,7 +147,7 @@ int ipv6_tcp_synopt_make_packet(void *buf, size_t *buf_len, __attribute__((unuse
 	tcp_header->th_sum = tcp6_checksum(sizeof(struct tcphdr)+tcp_send_opts_len,
 			&ip6_header->ip6_src, &ip6_header->ip6_dst, tcp_header);
 
-	*buf_len = 106;
+	*buf_len = 78+tcp_send_opts_len;
 
 	return EXIT_SUCCESS;
 }
