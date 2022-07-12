@@ -86,8 +86,8 @@ static int icmp6_echo_make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t 
 				2*sizeof(uint32_t)
                 );
 
-    size_t ip_len = sizeof(struct ip6_hdr) + 4*sizeof(uint32_t);
-    *buf_len = ip_len + sizeof(struct ether_header);
+    // 8 bytes of data are used in ICMPv6 for validation
+    *buf_len = sizeof(struct ether_header) + sizeof(struct ip6_hdr) + ICMP_MINLEN + 2*sizeof(uint32_t);
 
 
 	return EXIT_SUCCESS;
