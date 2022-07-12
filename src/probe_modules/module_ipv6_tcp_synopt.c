@@ -35,6 +35,8 @@ probe_module_t module_ipv6_tcp_synopt;
 static uint32_t num_ports;
 
 #define MAX_OPT_LEN 40
+#define ZMAP_TCP_HEADER_LEN 20
+#define ZMAP_TCP_SYNSCAN_PACKET_LEN 74
 
 static char *tcp_send_opts = NULL;
 static int tcp_send_opts_len = 0;
@@ -56,8 +58,7 @@ int ipv6_tcp_synopt_global_initialize(struct state_conf *conf)
 
 	if (!(conf->probe_args && strlen(conf->probe_args) > 0)){
 		printf("no args, using empty tcp options\n");
-		module_ipv6_tcp_synopt.max_packet_length = sizeof(struct ether_header) + sizeof(struct ip6_hdr)
-				+ sizeof(struct tcphdr);
+		module_ipv6_tcp_synopt.max_packet_length = ZMAP_TCP_SYNSCAN_PACKET_LEN;
 		return(EXIT_SUCCESS);
 	}
 	args = strdup(conf->probe_args);
@@ -100,8 +101,7 @@ int ipv6_tcp_synopt_global_initialize(struct state_conf *conf)
 		tcp_send_opts_len = MAX_OPT_LEN;
 		exit(1);
 	}
-	module_ipv6_tcp_synopt.max_packet_length = sizeof(struct ether_header) + sizeof(struct ip6_hdr)
-			+ sizeof(struct tcphdr)+ tcp_send_opts_len;
+	module_ipv6_tcp_synopt.max_packet_length = ZMAP_TCP_SYNSCAN_PACKET_LEN + tcp_send_opts_len;
 
 	return EXIT_SUCCESS;
 }
@@ -114,7 +114,7 @@ int ipv6_tcp_synopt_init_perthread(void* buf, macaddr_t *src,
 	struct ether_header *eth_header = (struct ether_header *) buf;
 	make_eth_header_ethertype(eth_header, src, gw, ETHERTYPE_IPV6);
 	struct ip6_hdr *ip6_header = (struct ip6_hdr*)(&eth_header[1]);
-	uint16_t payload_len = sizeof(struct tcphdr)+tcp_send_opts_len;
+	uint16_t payload_len = ZMAP_TCP_HEADER_LEN+tcp_send_opts_len;
 	make_ip6_header(ip6_header, IPPROTO_TCP, payload_len);
 	struct tcphdr *tcp_header = (struct tcphdr*)(&ip6_header[1]);
 	make_tcp_header(tcp_header, dst_port, TH_SYN);
@@ -144,10 +144,10 @@ int ipv6_tcp_synopt_make_packet(void *buf, size_t *buf_len, __attribute__((unuse
 
 
 	tcp_header->th_sum = 0;
-	tcp_header->th_sum = tcp6_checksum(sizeof(struct tcphdr)+tcp_send_opts_len,
+	tcp_header->th_sum = tcp6_checksum(ZMAP_TCP_HEADER_LEN+tcp_send_opts_len,
 			&ip6_header->ip6_src, &ip6_header->ip6_dst, tcp_header);
 
-	*buf_len = 78+tcp_send_opts_len;
+	*buf_len = ZMAP_TCP_SYNSCAN_PACKET_LEN+tcp_send_opts_len;
 
 	return EXIT_SUCCESS;
 }
@@ -213,7 +213,7 @@ void ipv6_tcp_synopt_process_packet(const u_char *packet,
 
 probe_module_t module_ipv6_tcp_synopt = {
 	.name = "ipv6_tcp_synopt",
-	.max_packet_length = 74, // will be extended at runtime
+	.max_packet_length = ZMAP_TCP_SYNSCAN_PACKET_LEN, // will be extended at runtime
 	.pcap_filter = "ip6 proto 6 && (ip6[53] & 4 != 0 || ip6[53] == 18)",
 	.pcap_snaplen = 116+10*4, // max option len
 	.port_args = 1,
