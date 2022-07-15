@@ -26,8 +26,8 @@
 #include "probe_modules.h"
 #include "packet.h"
 
-#define ZMAP_TCP_SYNSCAN_TCP_HEADER_LEN 20
-#define ZMAP_TCP_SYNSCAN_PACKET_LEN 74
+#define ZMAPV6_TCP_SYNSCAN_TCP_HEADER_LEN 20
+#define ZMAPV6_TCP_SYNSCAN_PACKET_LEN 74
 
 probe_module_t module_ipv6_tcp_synscan;
 static uint32_t num_ports;
@@ -52,7 +52,7 @@ int ipv6_synscan_init_perthread(void* buf, macaddr_t *src,
 	struct ether_header *eth_header = (struct ether_header *) buf;
 	make_eth_header_ethertype(eth_header, src, gw, ETHERTYPE_IPV6);
 	struct ip6_hdr *ip6_header = (struct ip6_hdr*)(&eth_header[1]);
-	uint16_t payload_len = ZMAP_TCP_SYNSCAN_TCP_HEADER_LEN;
+	uint16_t payload_len = ZMAPV6_TCP_SYNSCAN_TCP_HEADER_LEN;
 	make_ip6_header(ip6_header, IPPROTO_TCP, payload_len);
 	struct tcphdr *tcp_header = (struct tcphdr*)(&ip6_header[1]);
 	make_tcp_header(tcp_header, dst_port, TH_SYN);
@@ -75,10 +75,10 @@ int ipv6_synscan_make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t src_i
 				probe_num, validation));
 	tcp_header->th_seq = tcp_seq;
 	tcp_header->th_sum = 0;
-	tcp_header->th_sum = tcp6_checksum(ZMAP_TCP_SYNSCAN_TCP_HEADER_LEN,
+	tcp_header->th_sum = tcp6_checksum(ZMAPV6_TCP_SYNSCAN_TCP_HEADER_LEN,
 			&ip6_header->ip6_src, &ip6_header->ip6_dst, tcp_header);
 
-	*buf_len = ZMAP_TCP_SYNSCAN_PACKET_LEN;
+	*buf_len = ZMAPV6_TCP_SYNSCAN_PACKET_LEN;
 
 	return EXIT_SUCCESS;
 }
@@ -164,7 +164,7 @@ static fielddef_t fields[] = {
 
 probe_module_t module_ipv6_tcp_synscan = {
 	.name = "ipv6_tcp_synscan",
-	.max_packet_length = ZMAP_TCP_SYNSCAN_PACKET_LEN,
+	.max_packet_length = ZMAPV6_TCP_SYNSCAN_PACKET_LEN,
 	.pcap_filter = "ip6 proto 6 && (ip6[53] & 4 != 0 || ip6[53] == 18)",
 	.pcap_snaplen = 116, // was 96 for IPv4
 	.port_args = 1,

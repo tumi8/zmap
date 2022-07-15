@@ -30,8 +30,9 @@ probe_module_t module_tcp_synopt;
 static uint32_t num_ports;
 
 #define MAX_OPT_LEN 40
-#define ZMAP_TCP_HEADER_LEN 20
-#define ZMAP_TCP_SYNSCAN_PACKET_LEN 54
+
+#define ZMAP_TCP_SYNOPT_TCP_HEADER_LEN 20
+#define ZMAP_TCP_SYNOPT_PACKET_LEN 54
 
 static char *tcp_send_opts = NULL;
 static int tcp_send_opts_len = 0;
@@ -47,7 +48,7 @@ int tcpsynopt_global_initialize(struct state_conf *conf)
 
 	if (!(conf->probe_args && strlen(conf->probe_args) > 0)){
 		printf("no args, using empty tcp options\n");
-		module_tcp_synopt.max_packet_length = ZMAP_TCP_SYNSCAN_PACKET_LEN;
+		module_tcp_synopt.max_packet_length = ZMAP_TCP_SYNOPT_PACKET_LEN;
 		return(EXIT_SUCCESS);
 	}
 	args = strdup(conf->probe_args);
@@ -91,7 +92,7 @@ int tcpsynopt_global_initialize(struct state_conf *conf)
 		tcp_send_opts_len = MAX_OPT_LEN;
 		exit(1);
 	}
-	module_tcp_synopt.max_packet_length = ZMAP_TCP_SYNSCAN_PACKET_LEN + tcp_send_opts_len;
+	module_tcp_synopt.max_packet_length = ZMAP_TCP_SYNOPT_PACKET_LEN + tcp_send_opts_len;
 
 	return EXIT_SUCCESS;
 }
@@ -105,7 +106,7 @@ int tcpsynopt_init_perthread(void* buf, macaddr_t *src,
 	struct ether_header *eth_header = (struct ether_header *) buf;
 	make_eth_header(eth_header, src, gw);
 	struct ip *ip_header = (struct ip*)(&eth_header[1]);
-	uint16_t len = htons(sizeof(struct ip) + ZMAP_TCP_HEADER_LEN + tcp_send_opts_len);
+	uint16_t len = htons(sizeof(struct ip) + ZMAP_TCP_SYNOPT_TCP_HEADER_LEN + tcp_send_opts_len);
 	make_ip_header(ip_header, IPPROTO_TCP, len);
 	struct tcphdr *tcp_header = (struct tcphdr*)(&ip_header[1]);
 	make_tcp_header(tcp_header, dst_port, TH_SYN);
@@ -134,13 +135,13 @@ int tcpsynopt_make_packet(void *buf, size_t *buf_len, ipaddr_n_t src_ip, ipaddr_
     tcp_header->th_off = 5+tcp_send_opts_len/4; // default length = 5 + 9*32 bit options
 
 	tcp_header->th_sum = 0;
-	tcp_header->th_sum = tcp_checksum(ZMAP_TCP_HEADER_LEN+tcp_send_opts_len,
+	tcp_header->th_sum = tcp_checksum(ZMAP_TCP_SYNOPT_TCP_HEADER_LEN+tcp_send_opts_len,
 			ip_header->ip_src.s_addr, ip_header->ip_dst.s_addr, tcp_header);
 
 	ip_header->ip_sum = 0;
 	ip_header->ip_sum = zmap_ip_checksum((unsigned short *) ip_header);
 
-    *buf_len = ZMAP_TCP_SYNSCAN_PACKET_LEN+tcp_send_opts_len;
+    *buf_len = ZMAP_TCP_SYNOPT_PACKET_LEN+tcp_send_opts_len;
 
 	return EXIT_SUCCESS;
 }
@@ -169,7 +170,7 @@ int tcpsynopt_validate_packet(const struct ip *ip_hdr, uint32_t len,
 	}
 	// (4*5 =) 20 bytes IP header + 20 bytes tcp hdr + 36 bytes = 76 byte
 	// reply packet may not contain any tcp options!
-	if ((4*ip_hdr->ip_hl + ZMAP_TCP_HEADER_LEN + 0) > len) {
+	if ((4*ip_hdr->ip_hl + ZMAP_TCP_SYNOPT_TCP_HEADER_LEN + 0) > len) {
 		// buffer not large enough to contain expected tcp header
 		printf("buffer (%u) not large enough!\n" ,len);
 		return 0;
@@ -220,7 +221,7 @@ void tcpsynopt_process_packet(const u_char *packet,
 
 probe_module_t module_tcp_synopt = {
 	.name = "tcp_synopt",
-	.max_packet_length = ZMAP_TCP_SYNSCAN_PACKET_LEN, // will be extended at runtime
+	.max_packet_length = ZMAP_TCP_SYNOPT_PACKET_LEN, // will be extended at runtime
 	// tcp, ack set or syn+ack (bit random)
 	.pcap_filter = "tcp && tcp[13] & 4 != 0 || tcp[13] == 18",
 	.pcap_snaplen = 96+10*4, //max len
