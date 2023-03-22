@@ -11,6 +11,10 @@
  * default will send type A query with Recursion Desired for www.google.com
  * SUCCESS only for response msg with noerr response code */
 
+/* Edit by Maynard Koch (March 22nd, 2023)
+ * Added support for AAAA queries
+ * Added dynamic transaction ID (same mechanism as in standard DNS module)*/
+
 // Needed for asprintf
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE 1
@@ -49,7 +53,9 @@
 // default will be replaced by passed in argument
 // \x03\x77\x77\x77\x06\x67\x6f\x6f\x67\x6c\x65\x03\x63\x6f\x6d\x00 -> www.google.com
 // TAILER 4 bytes
-// \x00\x01 -> Type: A (Host address)
+// \x00\x01 -> Type: A (Host address) (default)
+// \x00\x1c -> Type: AAAA (IPv6 Host address)
+
 // \x00\x01 -> Class: IN (0x0001)
 
 static const char *udp_dns_response_strings[] = {
@@ -76,6 +82,7 @@ static const char udp_dns_msg_default[32] = "\x0b\x0b\x01\x20\x00\x01\x00\x00\x0
 static const char udp_dns_msg_default_head[DNS_HEAD_LEN] = "\xb0\x0b\x01\x20\x00\x01\x00\x00\x00\x00\x00\x00";
 // static const char udp_dns_msg_default_name [16] = "\x03\x77\x77\x77\x06\x67\x6f\x6f\x67\x6c\x65\x03\x63\x6f\x6d\x00";
 static const char udp_dns_msg_default_tail[DNS_TAIL_LEN]  = "\x00\x01\x00\x01";
+static const char udp_dns_msg_aaaa_tail[DNS_TAIL_LEN]  = "\x00\x1c\x00\x01";
 
 // google packet from wireshark
 // static const char udp_dns_msg_default[36] = "\xf5\x07\x00\x35\x00\x24\x04\x51\x10\xf5\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x06\x67\x6f\x6f\x67\x6c\x65\x03\x63\x6f\x6d\x00\x00\x01\x00\x01";
@@ -108,7 +115,7 @@ static void convert_to_dns_name_format(unsigned char* dns,unsigned char* host) {
 
 
 int ipv6_udp_dns_global_initialize(struct state_conf *conf) {
-	char *args, *c;
+	char *args, *c, *qtype;
 	int dns_domain_len;
 	unsigned char* dns_domain;
 
@@ -130,40 +137,45 @@ int ipv6_udp_dns_global_initialize(struct state_conf *conf) {
 	args = strdup(conf->probe_args);
 	if (! args) exit(1);
 
-	c = strchr(args, ':');
+    // changed delimiter ':' to ',' -> probe-args format: qtype,qname
+    // currently no support for multiple queries
+	c = strchr(args, ',');
+    qtype = strtok(args,',');
 	if (!c) {
 		free(args);
 		free(udp_send_msg);
 		log_fatal("udp_dns", "unknown UDP DNS probe specification (expected "
-				"domain name with name:www.domain.com)");
+				"query type and domain name with e.g. A,www.domain.com)");
 		exit(1);
 	}
 
 	*c++ = 0;
-	if (strcmp(args, "name") == 0) {
-		free(udp_send_msg);
-		// prepare domain name
-		dns_domain_len=strlen(c)+2; // head 1 byte + null terminator
-		dns_domain = malloc(dns_domain_len);
-		convert_to_dns_name_format(dns_domain, (unsigned char*)c);
+    free(udp_send_msg);
+    // prepare domain name
+    dns_domain_len=strlen(c)+2; // head 1 byte + null terminator
+    dns_domain = malloc(dns_domain_len);
+    convert_to_dns_name_format(dns_domain, (unsigned char*)c);
 
-		udp_send_msg_len=dns_domain_len + DNS_HEAD_LEN + DNS_TAIL_LEN; // domain length +  header + tailer
-		udp_send_msg = malloc(udp_send_msg_len);
+    udp_send_msg_len=dns_domain_len + DNS_HEAD_LEN + DNS_TAIL_LEN; // domain length +  header + tailer
+    udp_send_msg = malloc(udp_send_msg_len);
 
-		// create query packet
-		memcpy(udp_send_msg, udp_dns_msg_default_head, sizeof(udp_dns_msg_default_head)); // header
-		// random Transaction ID
-		random_bytes(udp_send_msg, 2);
-		memcpy(udp_send_msg + sizeof(udp_dns_msg_default_head), dns_domain, dns_domain_len); // domain
-		memcpy(udp_send_msg + sizeof(udp_dns_msg_default_head) + dns_domain_len, udp_dns_msg_default_tail, sizeof(udp_dns_msg_default_tail)); // trailer
-		free(dns_domain);
-	} else {
-		log_fatal("udp_dns", "unknown UDP DNS probe specification (expected "
-				"domain name with name:www.domain.com)");
+    // create query packet
+    memcpy(udp_send_msg, udp_dns_msg_default_head, sizeof(udp_dns_msg_default_head)); // header
+    // random Transaction ID
+    random_bytes(udp_send_msg, 2);
+    memcpy(udp_send_msg + sizeof(udp_dns_msg_default_head), dns_domain, dns_domain_len); // domain
+    if (strcmp(qtype,"A")==0){
+        memcpy(udp_send_msg + sizeof(udp_dns_msg_default_head) + dns_domain_len, udp_dns_msg_default_tail, sizeof(udp_dns_msg_default_tail)); // trailer
+    } else if (strcmp(qtype,"AAAA")==0){
+        memcpy(udp_send_msg + sizeof(udp_dns_msg_default_head) + dns_domain_len, udp_dns_msg_aaaa_tail, sizeof(udp_dns_msg_aaaa_tail)); // trailer
+    } else {
+		log_fatal("udp_dns", "unknown or unsupported UDP DNS query type specification (expected "
+				"qtype 'A' or 'AAAA')");
 		free(udp_send_msg);
 		free(args);
 		exit(1);
 	}
+    free(dns_domain);
 
 	if (udp_send_msg_len > MAX_UDP_PAYLOAD_LEN) {
 		log_warn("udp_dns", "warning: reducing UDP payload to %d "
