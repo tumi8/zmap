@@ -116,6 +116,7 @@ static void convert_to_dns_name_format(unsigned char* dns,unsigned char* host) {
 
 int ipv6_udp_dns_global_initialize(struct state_conf *conf) {
 	char *args, *c, *qtype;
+    const char delimiter[] = ",";
 	int dns_domain_len;
 	unsigned char* dns_domain;
 
@@ -140,7 +141,7 @@ int ipv6_udp_dns_global_initialize(struct state_conf *conf) {
     // changed delimiter ':' to ',' -> probe-args format: qtype,qname
     // currently no support for multiple queries
 	c = strchr(args, ',');
-    qtype = strtok(args,',');
+    qtype = strtok(args,delimiter);
 	if (!c) {
 		free(args);
 		free(udp_send_msg);
