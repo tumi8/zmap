@@ -164,6 +164,8 @@ int ipv6_udp_dns_global_initialize(struct state_conf *conf) {
     memcpy(udp_send_msg, udp_dns_msg_default_head, sizeof(udp_dns_msg_default_head)); // header
     // random Transaction ID
     random_bytes(udp_send_msg, 2);
+    log_fatal("debug_test","random bytes %",udp_send_msg);
+    exit(1);
     memcpy(udp_send_msg + sizeof(udp_dns_msg_default_head), dns_domain, dns_domain_len); // domain
     if (strcmp(qtype,"A")==0){
         memcpy(udp_send_msg + sizeof(udp_dns_msg_default_head) + dns_domain_len, udp_dns_msg_default_tail, sizeof(udp_dns_msg_default_tail)); // trailer
