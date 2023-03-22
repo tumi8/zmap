@@ -13,7 +13,7 @@
 
 /* Edit by Maynard Koch (March 22nd, 2023)
  * Added support for AAAA queries
- * Added dynamic transaction ID (same mechanism as in standard DNS module)*/
+ * Modified transaction ID settings -> now changing every packet (same mechanism as in standard DNS module)*/
 
 // Needed for asprintf
 #ifndef _GNU_SOURCE
@@ -164,8 +164,6 @@ int ipv6_udp_dns_global_initialize(struct state_conf *conf) {
     memcpy(udp_send_msg, udp_dns_msg_default_head, sizeof(udp_dns_msg_default_head)); // header
     // random Transaction ID
     random_bytes(udp_send_msg, 2);
-    log_fatal("debug_test","random bytes %",udp_send_msg);
-    exit(1);
     memcpy(udp_send_msg + sizeof(udp_dns_msg_default_head), dns_domain, dns_domain_len); // domain
     if (strcmp(qtype,"A")==0){
         memcpy(udp_send_msg + sizeof(udp_dns_msg_default_head) + dns_domain_len, udp_dns_msg_default_tail, sizeof(udp_dns_msg_default_tail)); // trailer
@@ -235,6 +233,12 @@ int ipv6_udp_dns_make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t src_i
 	ip6_header->ip6_ctlun.ip6_un1.ip6_un1_hlim = ttl;
 	udp_header->uh_sport = htons(get_src_port(num_ports, probe_num,
 				     validation));
+    // added missing code lines for modifying dns transaction id
+    // (just copy/paste from module_dns.c)
+	dns_header *dns_header_p = (dns_header *)&udp_header[1];
+
+	dns_header_p->id = validation[2] & 0xFFFF;
+    
 	udp_header->uh_sum = ipv6_udp_checksum(&ip6_header->ip6_src, &ip6_header->ip6_dst, udp_header);
 	
 	udp_header->uh_sum = ipv6_udp_checksum(&ip6_header->ip6_src,    &ip6_header->ip6_dst, udp_header);
