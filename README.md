@@ -38,6 +38,7 @@ We added IPv6 support to ZMap and include the following new probe modules:
 * ICMPv6 Echo Request: `icmp6_echoscan`
 * IPv6 TCP SYN (any port): `ipv6_tcp_synscan` or `ipv6_tcp_synopt`
 * IPV6 UDP (any port and payload): `ipv6_udp`
+* IPV6 DNS (any port): `ipv6_dns`
 
 You can specify the respective IPv6 probe module using the `-M` or `--probe-module` command line flag.
 
@@ -78,6 +79,38 @@ that do not follow the current specification.
 * Default: X=1178
 * Initial packets without padding: X=0
 * Initial packets with size 300: X=278
+
+IPv6 DNS Probe Moodule
+---------------------
+
+We added IPv6 DNS support to ZMap.
+To start the scanner enter (replace all variables with your system value [$interface,$node_ip,$target_file,$logfile,$gatewaymac):
+
+```bash
+zmap \
+        --interface="$interface" \
+        --ipv6-source-ip="$node_ip" \
+        --ipv6-target-file="$target_file" \
+        --target-port=53 \
+        --probe-module=ipv6_dns \
+        --probe-args="AAAA,www.google.com" \
+        --blocklist-file=/etc/zmap/blocklist.conf \
+        --rate=55000\
+        --gateway-mac=$gatewaymac
+```
+* `--interface`: specify interface
+* `$interface`: valid interface of scanning device
+* `--ipv6-source-ip`: specify IPv6 source address
+* `$node_ip`: IPv6 address
+* `--ipv6-target-file`: file with ipv6 addresses which shall be scanned
+* `$target_file`: path to scan file
+* `--target-port`: port, usually 53 for DNS
+* `--probe-module=ipv6_dns`: loads IPv6 DNS module
+* `--probe-args="AAAA,www.google.com"`: format is [QTYPE],[QNAME] - qtype support for "A", "NS", "CNAME", "SOA", "PTR", "MX", "TXT", "AAAA", "RRSIG", "ALL"
+* `--blocklist-file=/etc/zmap/blocklist.conf`: default blocklist file (addresses in there are skipped during scan)
+* `--rate=55000`: scan rate in packets per second
+* `--gateway-mac`: optional MAC address, may be necessary if scanning node has multiple interfaces and you are using a non-default interface
+* `$gatewaymac`: MAC address of the specified interface
 
 License and Copyright
 ---------------------
