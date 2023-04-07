@@ -17,6 +17,7 @@
 #include "../../lib/includes.h"
 #include "../../lib/blocklist.h"
 #include "../state.h"
+#include "logger.h"
 
 #ifndef PACKET_H
 #define PACKET_H
@@ -195,9 +196,9 @@ static inline uint16_t ipv6_udp_checksum(
 		bytes_left -= 2;
 	}
 
-	// If 1 byte is left, we add a padding byte (0xFF) to build a 16bit word
+	// If 1 byte is left, we add the last byte as a 16bit word
 	if (bytes_left > 0) {
-		sum += *w & ntohs(0xFF00);
+		sum += ntohs(*w);
 	}
 
 	// Account for carries
