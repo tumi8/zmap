@@ -11,8 +11,8 @@
  * default will send type A query with Recursion Desired for www.google.com
  * SUCCESS only for response msg with noerr response code */
 
-/* Edit by Maynard Koch (March 22nd, 2023)
- * Added support for AAAA queries
+/* Edit by M.Koch (April 7th, 2023)
+ * Added support for multiple query types ("A",  "NS",  "CNAME", "SOA",   "PTR", "MX", "TXT", "AAAA",  "RRSIG", "ALL")
  * Modified transaction ID settings -> now changing every packet (same mechanism as in standard DNS module)*/
 
 // Needed for asprintf
