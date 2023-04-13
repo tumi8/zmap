@@ -34,8 +34,12 @@
 #define MAX_UDP_PAYLOAD_LEN 1472
 #define UNUSED __attribute__((unused))
 #define DNS_HEAD_LEN 12
-#define DNS_TAIL_LEN 4
+#define DNS_QTYPE_LEN 2
+#define DNS_TAIL_LEN 2
 #define DNS_QR_ANSWER	1
+#define BAD_QTYPE_STR "BAD QTYPE"
+#define BAD_QTYPE_VAL -1
+
 
 // std query recursive for www.google.com type A
 // HEADER 12 bytes
@@ -49,8 +53,68 @@
 // default will be replaced by passed in argument
 // \x03\x77\x77\x77\x06\x67\x6f\x6f\x67\x6c\x65\x03\x63\x6f\x6d\x00 -> www.google.com
 // TAILER 4 bytes
-// \x00\x01 -> Type: A (Host address)
+// \x00\x01 -> Type: A (Host address) (default)
+// \x00\x1c -> Type: AAAA (IPv6 Host address)
+
 // \x00\x01 -> Class: IN (0x0001)
+
+static const char udp_dns_msg_default[32] = "\x0b\x0b\x01\x20\x00\x01\x00\x00\x00\x00\x00\x00\x03\x77\x77\x77\x06\x67\x6f\x6f\x67\x6c\x65\x03\x63\x6f\x6d\x00\x00\x01\x00\x01";
+static const char udp_dns_msg_default_head[DNS_HEAD_LEN] = "\xb0\x0b\x01\x20\x00\x01\x00\x00\x00\x00\x00\x00";
+// static const char udp_dns_msg_default_name [16] = "\x03\x77\x77\x77\x06\x67\x6f\x6f\x67\x6c\x65\x03\x63\x6f\x6d\x00";
+static const char udp_dns_msg_default_tail[DNS_TAIL_LEN]  = "\x00\x01";
+
+// google packet from wireshark
+// static const char udp_dns_msg_default[36] = "\xf5\x07\x00\x35\x00\x24\x04\x51\x10\xf5\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x06\x67\x6f\x6f\x67\x6c\x65\x03\x63\x6f\x6d\x00\x00\x01\x00\x01";
+
+/* defined in module_udp.c
+const char *udp_unreach_strings[] */
+
+static char *udp_send_msg = NULL;
+static int udp_send_msg_len = 0;
+
+static int num_ports;
+
+probe_module_t module_ipv6_udp_dns;
+
+/* Add local functions here to prevent multiple definition errors */
+/* Array of qtypes we support. Jumping through some hoops (1 level of
+* indirection) so the per-packet processing time is fast. Keep this in sync
+* with: dns_qtype (.h) qtype_strid_to_qtype (below) qtype_qtype_to_string
+* (below, and setup_qtype_str_map())
+*/
+const char *qtype_strings[] = {"A",  "NS",  "CNAME", "SOA",   "PTR",
+				"MX", "TXT", "AAAA",  "RRSIG", "ALL"};
+const int qtype_strs_length = 10;
+
+static const char* qtype_string_to_qtype[] = {
+	"\x00\x01",     "\x00\x02", "\x00\x05", "\x00\x06",
+	"\x00\x0c",   "\x00\x0f", "\x00\x10",   "\x00\x1c",
+	"\x00\x2e", "\x00\ff"};
+
+int8_t qtype_qtype_to_string[256] = {BAD_QTYPE_VAL};
+
+void setup_qtype_string_map()
+{
+	qtype_qtype_to_string[DNS_QTYPE_A] = 0;
+	qtype_qtype_to_string[DNS_QTYPE_NS] = 1;
+	qtype_qtype_to_string[DNS_QTYPE_CNAME] = 2;
+	qtype_qtype_to_string[DNS_QTYPE_SOA] = 3;
+	qtype_qtype_to_string[DNS_QTYPE_PTR] = 4;
+	qtype_qtype_to_string[DNS_QTYPE_MX] = 5;
+	qtype_qtype_to_string[DNS_QTYPE_TXT] = 6;
+	qtype_qtype_to_string[DNS_QTYPE_AAAA] = 7;
+	qtype_qtype_to_string[DNS_QTYPE_RRSIG] = 8;
+	qtype_qtype_to_string[DNS_QTYPE_ALL] = 9;
+}
+
+const char* qtype_string_to_code(const char *str)
+{
+	for (int i = 0; i < qtype_strs_length; i++) {
+		if (strcmp(qtype_strings[i], str) == 0)
+			return qtype_string_to_qtype[i];
+	}
+	return 0;
+}
 
 static const char *udp_dns_response_strings[] = {
         "DNS no error",
@@ -71,25 +135,6 @@ static const char *udp_dns_response_strings[] = {
 	"DNS Resevered 15"
 };
 
-
-static const char udp_dns_msg_default[32] = "\x0b\x0b\x01\x20\x00\x01\x00\x00\x00\x00\x00\x00\x03\x77\x77\x77\x06\x67\x6f\x6f\x67\x6c\x65\x03\x63\x6f\x6d\x00\x00\x01\x00\x01";
-static const char udp_dns_msg_default_head[DNS_HEAD_LEN] = "\xb0\x0b\x01\x20\x00\x01\x00\x00\x00\x00\x00\x00";
-// static const char udp_dns_msg_default_name [16] = "\x03\x77\x77\x77\x06\x67\x6f\x6f\x67\x6c\x65\x03\x63\x6f\x6d\x00";
-static const char udp_dns_msg_default_tail[DNS_TAIL_LEN]  = "\x00\x01\x00\x01";
-
-// google packet from wireshark
-// static const char udp_dns_msg_default[36] = "\xf5\x07\x00\x35\x00\x24\x04\x51\x10\xf5\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x06\x67\x6f\x6f\x67\x6c\x65\x03\x63\x6f\x6d\x00\x00\x01\x00\x01";
-
-/* defined in module_udp.c
-const char *udp_unreach_strings[] */
-
-static char *udp_send_msg = NULL;
-static int udp_send_msg_len = 0;
-
-static int num_ports;
-
-probe_module_t module_ipv6_udp_dns;
-
 //this will convert www.google.com to 3www6google3com
 static void convert_to_dns_name_format(unsigned char* dns,unsigned char* host) {
 	int lock = 0;
@@ -108,8 +153,10 @@ static void convert_to_dns_name_format(unsigned char* dns,unsigned char* host) {
 
 
 int ipv6_udp_dns_global_initialize(struct state_conf *conf) {
-	char *args, *c;
+	char *args, *c, *qtype;
+    const char delimiter[] = ",";
 	int dns_domain_len;
+	char hex_qtype[DNS_QTYPE_LEN] = {0};
 	unsigned char* dns_domain;
 
 	num_ports = conf->source_port_last - conf->source_port_first + 1;
@@ -124,46 +171,53 @@ int ipv6_udp_dns_global_initialize(struct state_conf *conf) {
 	udp_send_msg = malloc(udp_send_msg_len);
 	memcpy(udp_send_msg, udp_dns_msg_default, udp_send_msg_len);
 
+	setup_qtype_string_map();
+
 	if (!(conf->probe_args && strlen(conf->probe_args) > 0))
 		return(0);
 
 	args = strdup(conf->probe_args);
 	if (! args) exit(1);
 
-	c = strchr(args, ':');
+    // changed delimiter ':' to ',' -> probe-args format: qtype,qname
+    // currently no support for multiple queries
+	c = strchr(args, ',');
+    qtype = strtok(args,delimiter);
 	if (!c) {
 		free(args);
 		free(udp_send_msg);
 		log_fatal("udp_dns", "unknown UDP DNS probe specification (expected "
-				"domain name with name:www.domain.com)");
+				"query type and domain name with e.g. A,www.domain.com)");
 		exit(1);
 	}
 
 	*c++ = 0;
-	if (strcmp(args, "name") == 0) {
-		free(udp_send_msg);
-		// prepare domain name
-		dns_domain_len=strlen(c)+2; // head 1 byte + null terminator
-		dns_domain = malloc(dns_domain_len);
-		convert_to_dns_name_format(dns_domain, (unsigned char*)c);
+    free(udp_send_msg);
+    // prepare domain name
+    dns_domain_len=strlen(c)+2; // head 1 byte + null terminator
+    dns_domain = malloc(dns_domain_len);
+    convert_to_dns_name_format(dns_domain, (unsigned char*)c);
 
-		udp_send_msg_len=dns_domain_len + DNS_HEAD_LEN + DNS_TAIL_LEN; // domain length +  header + tailer
-		udp_send_msg = malloc(udp_send_msg_len);
+    udp_send_msg_len=dns_domain_len + DNS_HEAD_LEN + DNS_QTYPE_LEN + DNS_TAIL_LEN; // domain length +  header + tailer
+    udp_send_msg = malloc(udp_send_msg_len);
 
-		// create query packet
-		memcpy(udp_send_msg, udp_dns_msg_default_head, sizeof(udp_dns_msg_default_head)); // header
-		// random Transaction ID
-		random_bytes(udp_send_msg, 2);
-		memcpy(udp_send_msg + sizeof(udp_dns_msg_default_head), dns_domain, dns_domain_len); // domain
-		memcpy(udp_send_msg + sizeof(udp_dns_msg_default_head) + dns_domain_len, udp_dns_msg_default_tail, sizeof(udp_dns_msg_default_tail)); // trailer
-		free(dns_domain);
-	} else {
-		log_fatal("udp_dns", "unknown UDP DNS probe specification (expected "
-				"domain name with name:www.domain.com)");
-		free(udp_send_msg);
-		free(args);
-		exit(1);
+    // create query packet
+    memcpy(udp_send_msg, udp_dns_msg_default_head, sizeof(udp_dns_msg_default_head)); // header
+    // random Transaction ID
+    random_bytes(udp_send_msg, 2);
+    memcpy(udp_send_msg + sizeof(udp_dns_msg_default_head), dns_domain, dns_domain_len); // domain
+	const char* qtype_code = qtype_string_to_code(qtype);
+	if (!qtype_code) {
+		log_fatal("dns", "Incorrect qtype supplied. %s",qtype);
+		return EXIT_FAILURE;
 	}
+	hex_qtype[0] = qtype_code[0];
+    hex_qtype[1] = qtype_code[1];
+
+	memcpy(udp_send_msg + sizeof(udp_dns_msg_default_head) + dns_domain_len, hex_qtype, sizeof(hex_qtype)); // add qtype
+	memcpy(udp_send_msg + sizeof(udp_dns_msg_default_head) + dns_domain_len + sizeof(hex_qtype), udp_dns_msg_default_tail, sizeof(udp_dns_msg_default_tail)); // add trailer
+
+    free(dns_domain);
 
 	if (udp_send_msg_len > MAX_UDP_PAYLOAD_LEN) {
 		log_warn("udp_dns", "warning: reducing UDP payload to %d "
@@ -220,6 +274,11 @@ int ipv6_udp_dns_make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t src_i
 	ip6_header->ip6_ctlun.ip6_un1.ip6_un1_hlim = ttl;
 	udp_header->uh_sport = htons(get_src_port(num_ports, probe_num,
 				     validation));
+    	// added missing code lines for modifying dns transaction id
+	dns_header *dns_header_p = (dns_header *)&udp_header[1];
+
+	dns_header_p->id = validation[2] & 0xFFFF;
+    
 	udp_header->uh_sum = ipv6_udp_checksum(&ip6_header->ip6_src, &ip6_header->ip6_dst, udp_header);
 	
 	udp_header->uh_sum = ipv6_udp_checksum(&ip6_header->ip6_src,    &ip6_header->ip6_dst, udp_header);
