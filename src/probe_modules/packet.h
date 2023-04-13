@@ -197,7 +197,7 @@ static inline uint16_t ipv6_udp_checksum(
 
 	// If 1 byte is left, we add a padding byte (0xFF) to build a 16bit word
 	if (bytes_left > 0) {
-		sum += *w & ntohs(0xFF00);
+		sum += ntohs(*w) & 0xFF00;
 	}
 
 	// Account for carries
