@@ -75,8 +75,8 @@ int ipv6_synscan_make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t src_i
 				probe_num, validation));
 	tcp_header->th_seq = tcp_seq;
 	tcp_header->th_sum = 0;
-	tcp_header->th_sum = tcp6_checksum(ZMAPV6_TCP_SYNSCAN_TCP_HEADER_LEN,
-			&ip6_header->ip6_src, &ip6_header->ip6_dst, tcp_header);
+
+	tcp_header->th_sum = ipv6_payload_checksum(ZMAPV6_TCP_SYNSCAN_TCP_HEADER_LEN, &ip6_header->ip6_src, &ip6_header->ip6_dst, (unsigned short *) tcp_header, IPPROTO_TCP);
 
 	*buf_len = ZMAPV6_TCP_SYNSCAN_PACKET_LEN;
 

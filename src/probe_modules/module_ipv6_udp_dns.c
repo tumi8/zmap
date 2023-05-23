@@ -274,14 +274,14 @@ int ipv6_udp_dns_make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t src_i
 	ip6_header->ip6_ctlun.ip6_un1.ip6_un1_hlim = ttl;
 	udp_header->uh_sport = htons(get_src_port(num_ports, probe_num,
 				     validation));
-    	// added missing code lines for modifying dns transaction id
+
+  // added missing code lines for modifying dns transaction id
 	dns_header *dns_header_p = (dns_header *)&udp_header[1];
 
 	dns_header_p->id = validation[2] & 0xFFFF;
-    
-	udp_header->uh_sum = ipv6_udp_checksum(&ip6_header->ip6_src, &ip6_header->ip6_dst, udp_header);
 	
-	udp_header->uh_sum = ipv6_udp_checksum(&ip6_header->ip6_src,    &ip6_header->ip6_dst, udp_header);
+	udp_header->uh_sum = 0;
+	udp_header->uh_sum = ipv6_payload_checksum(ntohs(udp_header->uh_ulen), &ip6_header->ip6_src, &ip6_header->ip6_dst, (unsigned short *) udp_header, IPPROTO_UDP);
 
 	size_t headers_len = sizeof(struct ether_header) + sizeof(struct ip6_hdr) + sizeof(struct udphdr);
 	*buf_len = headers_len + udp_send_msg_len;

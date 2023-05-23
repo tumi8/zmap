@@ -144,8 +144,10 @@ int ipv6_tcp_synopt_make_packet(void *buf, size_t *buf_len, __attribute__((unuse
 
 
 	tcp_header->th_sum = 0;
-	tcp_header->th_sum = tcp6_checksum(ZMAPV6_TCP_SYNOPT_TCP_HEADER_LEN+tcp_send_opts_len,
-			&ip6_header->ip6_src, &ip6_header->ip6_dst, tcp_header);
+
+	unsigned short len_tcp = ZMAPV6_TCP_SYNOPT_TCP_HEADER_LEN+tcp_send_opts_len;
+
+	tcp_header->th_sum = ipv6_payload_checksum(len_tcp, &ip6_header->ip6_src, &ip6_header->ip6_dst, (unsigned short *) tcp_header, IPPROTO_TCP);
 
 	*buf_len = ZMAPV6_TCP_SYNOPT_PACKET_LEN+tcp_send_opts_len;
 

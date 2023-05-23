@@ -79,12 +79,8 @@ static int icmp6_echo_make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t 
 
 	icmp6_header->icmp6_id= icmp_idnum;
 	icmp6_header->icmp6_cksum = 0;
-	icmp6_header->icmp6_cksum= (uint16_t) icmp6_checksum(
-                &ip6_header->ip6_src,
-		        &ip6_header->ip6_dst,
-				icmp6_header,
-				2*sizeof(uint32_t)
-                );
+
+	icmp6_header->icmp6_cksum = ipv6_payload_checksum(sizeof(struct icmp6_hdr) + 2*sizeof(uint32_t), &ip6_header->ip6_src, &ip6_header->ip6_dst, (unsigned short *) icmp6_header, IPPROTO_ICMPV6);
 
     // 8 bytes of data are used in ICMPv6 for validation
     *buf_len = sizeof(struct ether_header) + sizeof(struct ip6_hdr) + ICMP_MINLEN + 2*sizeof(uint32_t);

@@ -304,7 +304,8 @@ int ipv6_udp_make_packet(void *buf, size_t *buf_len, __attribute__((unused)) ipa
 		udp_header->uh_ulen = ntohs(sizeof(struct udphdr) + payload_len);
 	}
 */
-	udp_header->uh_sum = ipv6_udp_checksum(&ip6_header->ip6_src, &ip6_header->ip6_dst, udp_header);
+	udp_header->uh_sum = 0;
+	udp_header->uh_sum = ipv6_payload_checksum(ntohs(udp_header->uh_ulen), &ip6_header->ip6_src, &ip6_header->ip6_dst, (unsigned short *) udp_header, IPPROTO_UDP);
 	
 	size_t headers_len = sizeof(struct ether_header) + sizeof(struct ip6_hdr) +
 			     sizeof(struct udphdr);
