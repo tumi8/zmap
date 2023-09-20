@@ -26,8 +26,8 @@
 #include "probe_modules.h"
 #include "packet.h"
 
-#define ZMAPV6_TCP_SYNSCAN_TCP_HEADER_LEN 20
-#define ZMAPV6_TCP_SYNSCAN_PACKET_LEN 74
+#define ZMAPV6_TCP_SYNSCAN_TCP_HEADER_LEN 24
+#define ZMAPV6_TCP_SYNSCAN_PACKET_LEN 78
 
 probe_module_t module_ipv6_tcp_synscan;
 static uint32_t num_ports;
@@ -56,6 +56,7 @@ int ipv6_synscan_init_perthread(void* buf, macaddr_t *src,
 	make_ip6_header(ip6_header, IPPROTO_TCP, payload_len);
 	struct tcphdr *tcp_header = (struct tcphdr*)(&ip6_header[1]);
 	make_tcp_header(tcp_header, dst_port, TH_SYN);
+	set_mss_option(tcp_header);
 	return EXIT_SUCCESS;
 }
 
