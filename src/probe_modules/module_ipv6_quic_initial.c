@@ -10,7 +10,6 @@
 
 /* module to perform IETF QUIC (draft-32) enumeration */
 
-#include <netinet/udp.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
