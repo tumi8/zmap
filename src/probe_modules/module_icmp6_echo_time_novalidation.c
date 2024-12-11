@@ -126,7 +126,7 @@ static void icmp6_echotime_print_packet(FILE *fp, void* packet)
 
 
 static int icmp6_echotime_validate_packet(const struct ip *ip_hdr,
-		uint32_t len, __attribute__((unused)) uint32_t *src_ip,UNUSED uint32_t *validation)
+		uint32_t len, __attribute__((unused)) uint32_t *src_ip,UNUSED uint32_t *validation, UNUSED const struct port_conf *ports)
 {
     struct ip6_hdr *ip6_hdr = (struct ip6_hdr*) ip_hdr;
 

@@ -110,7 +110,7 @@ static void icmp6_echo_print_packet(FILE *fp, void* packet)
 
 
 static int icmp6_validate_packet(const struct ip *ip_hdr,
-		uint32_t len, __attribute__((unused)) uint32_t *src_ip, uint32_t *validation)
+		uint32_t len, __attribute__((unused)) uint32_t *src_ip, uint32_t *validation, UNUSED const struct port_conf *ports)
 {
     struct ip6_hdr *ip6_hdr = (struct ip6_hdr*) ip_hdr;
 
@@ -142,7 +142,7 @@ static int icmp6_validate_packet(const struct ip *ip_hdr,
 		icmp6_h = (struct icmp6_hdr *) &ip6_hdr[1];
 
 		// Send original src and dst IP as data in ICMPv6 payload and regenerate the validation here
-        validate_gen_ipv6(&ip6_hdr->ip6_dst, &ip6_hdr->ip6_src,
+        validate_gen_ipv6(&ip6_hdr->ip6_dst, &ip6_hdr->ip6_src, 0,
 			     (uint8_t *) validation);
 	}
 	// validate icmp id

@@ -30,7 +30,7 @@
 #include "probe_modules/probe_modules.h"
 
 #define PCAP_PROMISC 1
-#define PCAP_TIMEOUT 1000
+#define PCAP_TIMEOUT 100
 
 static pcap_t *pc = NULL;
 
@@ -57,7 +57,7 @@ void packet_cb(u_char __attribute__((__unused__)) * user,
 
 #define BPFLEN 1024
 
-void recv_init()
+void recv_init(void)
 {
 	char bpftmp[BPFLEN];
 	char errbuf[PCAP_ERRBUF_SIZE];
@@ -69,6 +69,11 @@ void recv_init()
 			  errbuf);
 	}
 	switch (pcap_datalink(pc)) {
+	case DLT_NULL:
+		// utun on macOS
+		log_debug("recv", "BSD loopback encapsulation");
+		zconf.data_link_size = 4;
+		break;
 	case DLT_EN10MB:
 		log_debug("recv", "Data link layer Ethernet");
 		zconf.data_link_size = sizeof(struct ether_header);
@@ -84,7 +89,7 @@ void recv_init()
 		break;
 #endif
 	default:
-		log_error("recv", "unknown data link layer");
+		log_error("recv", "unknown data link layer: %u", pcap_datalink(pc));
 	}
 
 	struct bpf_program bpf;
@@ -124,7 +129,7 @@ void recv_init()
 	}
 }
 
-void recv_packets()
+void recv_packets(void)
 {
 	int ret = pcap_dispatch(pc, -1, packet_cb, NULL);
 	if (ret == -1) {
@@ -134,7 +139,7 @@ void recv_packets()
 	}
 }
 
-void recv_cleanup()
+void recv_cleanup(void)
 {
 	pcap_close(pc);
 	pc = NULL;

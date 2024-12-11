@@ -31,6 +31,7 @@ void recv_init()
 		log_fatal("recv", "Could not get packet handle: %s",
 			  strerror(errno));
 	}
+	zconf.data_link_size = sizeof(struct ether_header);
 }
 
 void recv_cleanup()
@@ -43,14 +44,12 @@ void recv_cleanup()
 
 void recv_packets()
 {
-	int ret;
-	// Poll for packets
-	do {
-		ret = pfring_zc_recv_pkt(pf_recv, &pf_buffer, 0);
-		if (ret == 0) {
-			usleep(1000);
-		}
-	} while (ret == 0);
+	int ret = pfring_zc_recv_pkt(pf_recv, &pf_buffer, 0);
+	// Empty queue, return to let outer loop check for termination
+	if (ret == 0) {
+		usleep(1000);
+		return;
+	}
 	// Handle other errors, by not doing anything and logging
 	if (ret != 1) {
 		log_error("recv", "Error: %d", ret);

@@ -14,7 +14,7 @@
 #define _GNU_SOURCE 1
 #endif
 
-
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -31,12 +31,16 @@
 
 #include "module_tcp_synopt.h"
 
+
 probe_module_t module_ipv6_tcp_synopt;
 static uint32_t num_ports;
 
 #define MAX_OPT_LEN 40
 #define ZMAPV6_TCP_SYNOPT_TCP_HEADER_LEN 20
 #define ZMAPV6_TCP_SYNOPT_PACKET_LEN 74
+#define SOURCE_PORT_VALIDATION_MODULE_DEFAULT true; // default to validating source port
+static bool should_validate_src_port = SOURCE_PORT_VALIDATION_MODULE_DEFAULT
+
 
 static char *tcp_send_opts = NULL;
 static int tcp_send_opts_len = 0;
@@ -117,11 +121,11 @@ int ipv6_tcp_synopt_init_perthread(void* buf, macaddr_t *src,
 	uint16_t payload_len = ZMAPV6_TCP_SYNOPT_TCP_HEADER_LEN+tcp_send_opts_len;
 	make_ip6_header(ip6_header, IPPROTO_TCP, payload_len);
 	struct tcphdr *tcp_header = (struct tcphdr*)(&ip6_header[1]);
-	make_tcp_header(tcp_header, dst_port, TH_SYN);
+	make_tcp_header(tcp_header, TH_SYN);
 	return EXIT_SUCCESS;
 }
 
-int ipv6_tcp_synopt_make_packet(void *buf, size_t *buf_len, __attribute__((unused)) ipaddr_n_t src_ip, __attribute__((unused)) ipaddr_n_t dst_ip,
+int ipv6_tcp_synopt_make_packet(void *buf, size_t *buf_len, __attribute__((unused)) ipaddr_n_t src_ip, __attribute__((unused)) ipaddr_n_t dst_ip, port_n_t dport,
         uint8_t ttl, uint32_t *validation, int probe_num, void *arg)
 {
 	struct ether_header *eth_header = (struct ether_header *) buf;
@@ -136,6 +140,7 @@ int ipv6_tcp_synopt_make_packet(void *buf, size_t *buf_len, __attribute__((unuse
 
 	tcp_header->th_sport = htons(get_src_port(num_ports,
 				probe_num, validation));
+	tcp_header->th_dport = dport;
 	tcp_header->th_seq = tcp_seq;
 
     memcpy(opts, tcp_send_opts, tcp_send_opts_len);
@@ -171,7 +176,8 @@ void ipv6_tcp_synopt_print_packet(FILE *fp, void* packet)
 
 int ipv6_tcp_synopt_validate_packet(const struct ip *ip_hdr, uint32_t len,
 		__attribute__((unused))uint32_t *src_ip,
-		uint32_t *validation)
+		uint32_t *validation,
+		const struct port_conf *ports)
 {
 	struct ip6_hdr *ipv6_hdr = (struct ip6_hdr *) ip_hdr;
 
@@ -186,9 +192,9 @@ int ipv6_tcp_synopt_validate_packet(const struct ip *ip_hdr, uint32_t len,
 	uint16_t sport = tcp_hdr->th_sport;
 	uint16_t dport = tcp_hdr->th_dport;
 	// validate source port
-	if (ntohs(sport) != zconf.target_port) {
-		return 0;
-	}
+		if (should_validate_src_port && !check_src_port(sport, ports)) {
+			return PACKET_INVALID;
+		}
 	// validate destination port
 	if (!check_dst_port(ntohs(dport), num_ports, validation)) {
 		return 0;

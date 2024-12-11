@@ -70,13 +70,7 @@ int quic_initial_global_initialize(struct state_conf *conf)
 
 	num_ports = conf->source_port_last - conf->source_port_first + 1;
 
-	char port[16];
-	sprintf(port, "%d", conf->target_port);
-	// answers have the target port as source
-	memcpy(filter_rule, "udp src port \0", 14);
-
-	module_quic_initial.pcap_filter = strncat(filter_rule, port, 16);
-	// set length of pcap
+		// set length of pcap
 	module_quic_initial.pcap_snaplen =
 	    sizeof(struct ether_header) + sizeof(struct ip) +
 	    sizeof(struct udphdr) + QUIC_PACKET_LENGTH;
@@ -117,7 +111,7 @@ int quic_initial_init_perthread(void *buf, macaddr_t *src, macaddr_t *gw,
 
 	struct udphdr *udp_header = (struct udphdr *)(&ip_header[1]);
 	len = sizeof(struct udphdr) + udp_send_msg_len;
-	make_udp_header(udp_header, zconf.target_port, len);
+	make_udp_header(udp_header, len);
 
 	char *payload = (char *)(&udp_header[1]);
 
@@ -131,7 +125,7 @@ int quic_initial_init_perthread(void *buf, macaddr_t *src, macaddr_t *gw,
 }
 
 int quic_initial_make_packet(void *buf, size_t *buf_len,
-			     ipaddr_n_t src_ip, ipaddr_n_t dst_ip,
+			     ipaddr_n_t src_ip, ipaddr_n_t dst_ip, port_n_t dport,
 			     UNUSED uint8_t ttl, uint32_t *validation,
 			     int probe_num, UNUSED void *arg)
 {
@@ -143,6 +137,7 @@ int quic_initial_make_packet(void *buf, size_t *buf_len,
 	ip_header->ip_dst.s_addr = dst_ip;
 	udp_header->uh_sport =
 	    htons(get_src_port(num_ports, probe_num, validation));
+	udp_header->uh_dport = dport;
 
 	uint8_t *payload = (uint8_t *)&udp_header[1];
 	int payload_len = 0;

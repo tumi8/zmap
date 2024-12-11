@@ -6,12 +6,12 @@
  * of the License at http://www.apache.org/licenses/LICENSE-2.0
  */
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <unistd.h>
 #include <string.h>
-#include <assert.h>
 
 #include "../../lib/includes.h"
 #include "probe_modules.h"
@@ -26,23 +26,28 @@
 probe_module_t module_ntp;
 
 static int num_ports;
+#define SOURCE_PORT_VALIDATION_MODULE_DEFAULT true; // default to validating source port
+static bool should_validate_src_port = SOURCE_PORT_VALIDATION_MODULE_DEFAULT
 
-
-int ntp_global_initialize(struct state_conf *conf) {
+int ntp_global_initialize(struct state_conf *conf)
+{
 	num_ports = conf->source_port_last - conf->source_port_first + 1;
+	if (conf->validate_source_port_override == VALIDATE_SRC_PORT_DISABLE_OVERRIDE) {
+		log_debug("ntp", "disabling source port validation");
+		should_validate_src_port = false;
+	}
 	return udp_global_initialize(conf);
 }
 
 int ntp_validate_packet(const struct ip *ip_hdr, uint32_t len, uint32_t *src_ip,
-			uint32_t *validation)
+			uint32_t *validation, const struct port_conf *ports)
 {
 	return udp_do_validate_packet(ip_hdr, len, src_ip, validation,
-				      num_ports, zconf.target_port);
+				      num_ports, should_validate_src_port, ports);
 }
 
-void ntp_process_packet(const u_char *packet,
-			UNUSED uint32_t len, fieldset_t *fs,
-			UNUSED uint32_t *validation,
+void ntp_process_packet(const u_char *packet, UNUSED uint32_t len,
+			fieldset_t *fs, UNUSED uint32_t *validation,
 			UNUSED struct timespec ts)
 {
 	struct ip *ip_hdr = (struct ip *)&packet[sizeof(struct ether_header)];
@@ -155,8 +160,16 @@ void ntp_process_packet(const u_char *packet,
 	}
 }
 
-int ntp_init_perthread(void *buf, macaddr_t *src, macaddr_t *gw,
-		       UNUSED port_h_t dst_port, void **arg)
+int ntp_init_perthread(void **arg)
+{
+	uint32_t seed = aesrand_getword(zconf.aes);
+	aesrand_t *aes = aesrand_init_from_seed(seed);
+	*arg = aes;
+
+	return EXIT_SUCCESS;
+}
+
+int ntp_prepare_packet(void *buf, macaddr_t *src, macaddr_t *gw, UNUSED void *arg)
 {
 	memset(buf, 0, MAX_PACKET_SIZE);
 	struct ether_header *eth_header = (struct ether_header *)buf;
@@ -171,18 +184,12 @@ int ntp_init_perthread(void *buf, macaddr_t *src, macaddr_t *gw,
 	ntp_header->LI_VN_MODE = 227;
 	len = sizeof(struct udphdr) + sizeof(struct ntphdr);
 
-	make_udp_header(udp_header, zconf.target_port, len);
+	make_udp_header(udp_header, len);
 
 	// TODO(dadrian): Should this have a payload? It was being set incorrectly.
-	size_t header_len = sizeof(struct ether_header)
-	    + sizeof(struct ip)
-	    + sizeof(struct udphdr)
-	    + sizeof(struct ntphdr);
+	size_t header_len = sizeof(struct ether_header) + sizeof(struct ip) +
+			    sizeof(struct udphdr) + sizeof(struct ntphdr);
 	module_ntp.max_packet_length = header_len;
-
-	uint32_t seed = aesrand_getword(zconf.aes);
-	aesrand_t *aes = aesrand_init_from_seed(seed);
-	*arg = aes;
 
 	return EXIT_SUCCESS;
 }
@@ -244,8 +251,9 @@ probe_module_t module_ntp = {.name = "ntp",
 			     .pcap_filter = "udp || icmp",
 			     .pcap_snaplen = 1500,
 			     .port_args = 1,
-			     .thread_initialize = &ntp_init_perthread,
 			     .global_initialize = &ntp_global_initialize,
+			     .thread_initialize = &ntp_init_perthread,
+			     .prepare_packet = &ntp_prepare_packet,
 			     .make_packet = &udp_make_packet,
 			     .print_packet = &ntp_print_packet,
 			     .validate_packet = &ntp_validate_packet,

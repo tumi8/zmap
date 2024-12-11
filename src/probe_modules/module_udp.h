@@ -18,7 +18,8 @@
 
 #include "state.h"
 
-#define NO_SRC_PORT_VALIDATION -1
+#define NO_SRC_PORT_VALIDATION 0
+#define SRC_PORT_VALIDATION 1
 
 typedef enum udp_payload_field_type {
 	UDP_DATA,
@@ -33,7 +34,10 @@ typedef enum udp_payload_field_type {
 	UDP_RAND_BYTE,
 	UDP_RAND_DIGIT,
 	UDP_RAND_ALPHA,
-	UDP_RAND_ALPHANUM
+	UDP_RAND_ALPHANUM,
+	UDP_HEX,
+	UDP_UNIXTIME_SEC,
+	UDP_UNIXTIME_USEC
 } udp_payload_field_type_t;
 
 typedef struct udp_payload_field_type_def {
@@ -62,19 +66,22 @@ typedef struct udp_payload_output {
 void udp_print_packet(FILE *fp, void *packet);
 
 int udp_make_packet(void *buf, size_t *buf_len, ipaddr_n_t src_ip,
-		    ipaddr_n_t dst_ip, uint8_t ttl, uint32_t *validation,
-		    int probe_num, void *arg);
+		    ipaddr_n_t dst_ip, port_n_t dport, uint8_t ttl,
+		    uint32_t *validation, int probe_num, uint16_t ip_id,
+		    void *arg);
 int udp_make_templated_packet(void *buf, size_t *buf_len, ipaddr_n_t src_ip,
-			      ipaddr_n_t dst_ip, uint8_t ttl,
-			      uint32_t *validation, int probe_num, void *arg);
+			      ipaddr_n_t dst_ip, port_n_t dport, uint8_t ttl,
+			      uint32_t *validation, int probe_num, uint16_t ip_id,
+			      void *arg);
 
 int udp_do_validate_packet(const struct ip *ip_hdr, uint32_t len,
-			   UNUSED uint32_t *src_ip,
-			   uint32_t *validation, int num_ports,
-			   int expected_port);
+			   UNUSED uint32_t *src_ip, uint32_t *validation,
+			   int num_ports, int expected_port,
+			   const struct port_conf *ports);
 
 int ipv6_udp_validate_packet(const struct ip6_hdr *ipv6_hdr, uint32_t len,
-		__attribute__((unused))uint32_t *src_ip, uint32_t *validation);
+		__attribute__((unused))uint32_t *src_ip, uint32_t *validation, int num_ports, int validate_port, 
+		const struct port_conf *ports);
 
 extern const char *udp_unreach_strings[];
 void udp_set_num_ports(int);

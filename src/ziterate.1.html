@@ -84,6 +84,9 @@ order similar to how ZMap generates random addresses to be scanned.</p>
 <h3 id="BASIC-OPTIONS">BASIC OPTIONS</h3>
 
 <dl>
+<dt> <code>-p</code>, <code>--target-ports=port(s)</code></dt><dd><p> List of TCP/UDP ports and/or port ranges to scan. (e.g., 80,443,100-105).
+ Use '*' to scan all ports, including port 0. If no port is specified,
+ ziterate will output only IPs.</p></dd>
 <dt> <code>-b</code>, <code>--blocklist-file=path</code></dt><dd><p> File of subnets to exclude, in CIDR notation, one-per line. It is
  recommended you use this to exclude RFC 1918 addresses, multicast, IANA
  reserved space, and other IANA special-purpose addresses. An example
@@ -118,7 +121,7 @@ subnets will be excluded.</p></dd>
 
   <ol class='man-decor man-foot man foot'>
     <li class='tl'>ZMap</li>
-    <li class='tc'>June 2017</li>
+    <li class='tc'>May 2024</li>
     <li class='tr'>ziterate(1)</li>
   </ol>
 

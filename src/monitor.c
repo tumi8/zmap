@@ -16,6 +16,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <math.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,14 +24,15 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "iterator.h"
-#include "recv.h"
-#include "state.h"
-
 #include "../lib/lockfd.h"
 #include "../lib/logger.h"
 #include "../lib/util.h"
 #include "../lib/xalloc.h"
+
+#include "blocklist.h"
+#include "iterator.h"
+#include "recv.h"
+#include "state.h"
 
 #define UPDATE_INTERVAL 1 // seconds
 #define NUMBER_STR_LEN 20
@@ -42,11 +44,11 @@ typedef struct internal_scan_status {
 	double last_now;
 	uint64_t last_sent;
 	uint64_t last_tried_sent;
-	uint32_t last_send_failures;
-	uint32_t last_recv_net_success;
-	uint32_t last_recv_app_success;
-	uint32_t last_recv_total;
-	uint32_t last_pcap_drop;
+	uint64_t last_send_failures;
+	uint64_t last_recv_net_success;
+	uint64_t last_recv_app_success;
+	uint64_t last_recv_total;
+	uint64_t last_pcap_drop;
 	double min_hitrate_start;
 } int_status_t;
 
@@ -54,10 +56,10 @@ typedef struct internal_scan_status {
 typedef struct export_scan_status {
 	uint64_t total_sent;
 	uint64_t total_tried_sent;
-	uint32_t recv_success_unique;
-	uint32_t app_recv_success_unique;
+	uint64_t recv_success_unique;
+	uint64_t app_recv_success_unique;
 	uint64_t total_recv;
-	uint32_t complete;
+	uint64_t complete;
 	uint32_t send_threads;
 	double percent_complete;
 
@@ -83,9 +85,9 @@ typedef struct export_scan_status {
 	double app_success_avg;
 	char app_success_avg_str[NUMBER_STR_LEN];
 
-	uint32_t pcap_drop;
-	uint32_t pcap_ifdrop;
-	uint32_t pcap_drop_total;
+	uint64_t pcap_drop;
+	uint64_t pcap_ifdrop;
+	uint64_t pcap_drop_total;
 	char pcap_drop_total_str[NUMBER_STR_LEN];
 	double pcap_drop_last;
 	char pcap_drop_last_str[NUMBER_STR_LEN];
@@ -97,7 +99,7 @@ typedef struct export_scan_status {
 	uint32_t time_past;
 	char time_past_str[NUMBER_STR_LEN];
 
-	uint32_t fail_total;
+	uint64_t fail_total;
 	double fail_avg;
 	double fail_last;
 	float seconds_under_min_hitrate;
@@ -119,23 +121,25 @@ static double min_d(double array[], int n)
 }
 
 // estimate time remaining time based on config and state
-double compute_remaining_time(double age, uint64_t packets_sent, uint64_t iterations)
+double compute_remaining_time(double age, uint64_t packets_sent,
+			      uint64_t iterations)
 {
 	if (!zsend.complete) {
-		double remaining[] = {INFINITY, INFINITY, INFINITY, INFINITY, INFINITY};
+		double remaining[] = {INFINITY, INFINITY, INFINITY, INFINITY,
+				      INFINITY};
 		if (zsend.list_of_ips_pbm) {
 			// Estimate progress using group iterations
-			double done = (double) iterations /
-					((uint64_t)0xFFFFFFFFU /
-					zconf.total_shards);
+			double done =
+			    (double)iterations /
+			    ((uint64_t)0xFFFFFFFFU / zconf.total_shards);
 			remaining[0] =
-				(1. - done) * (age / done) + zconf.cooldown_secs;
+			    (1. - done) * (age / done) + zconf.cooldown_secs;
 		}
 		if (zsend.max_targets) {
 			double done =
 			    (double)packets_sent /
-			    ((uint64_t)zsend.max_targets * zconf.packet_streams /
-			     zconf.total_shards);
+			    ((uint64_t)zsend.max_targets *
+			     zconf.packet_streams / zconf.total_shards);
 			remaining[1] =
 			    (1. - done) * (age / done) + zconf.cooldown_secs;
 		}
@@ -149,15 +153,26 @@ double compute_remaining_time(double age, uint64_t packets_sent, uint64_t iterat
 			remaining[3] = (1. - done) * (age / done);
 		}
 		if (zsend.max_index) {
-			double done = (double)packets_sent /
-				      (zsend.max_index * zconf.packet_streams /
-				       zconf.total_shards);
+			double done =
+			    (double)packets_sent /
+			    ((uint64_t)zsend.max_index * zconf.ports->port_count * zconf.packet_streams /
+			     zconf.total_shards);
 			remaining[4] =
 			    (1. - done) * (age / done) + zconf.cooldown_secs;
 		}
-		return min_d(remaining, sizeof(remaining) / sizeof(double));
+		double remaining_time = min_d(remaining, sizeof(remaining) / sizeof(double));
+		if (remaining_time < 0) {
+			// remaining time cannot be less than zero
+			return 0;
+		}
+		return remaining_time;
 	} else {
-		return zconf.cooldown_secs - (now() - zsend.finish);
+		double remaining_time = zconf.cooldown_secs - (now() - zsend.finish);
+		if (remaining_time < 0) {
+			// remaining time cannot be less than zero
+			return 0;
+		}
+		return remaining_time;
 	}
 }
 
@@ -176,13 +191,14 @@ static void export_stats(int_status_t *intrnl, export_status_t *exp,
 	uint64_t total_iterations = iterator_get_iterations(it);
 	uint32_t total_fail = iterator_get_fail(it);
 	uint64_t total_recv = zrecv.pcap_recv;
-	uint64_t recv_success = zrecv.filter_success;
+	uint64_t recv_success = zrecv.success_unique;
 	uint32_t app_success = zrecv.app_success_unique;
 	double cur_time = now();
 	double age = cur_time - zsend.start; // time of entire scan
 	// time since the last time we updated
 	double delta = cur_time - intrnl->last_now;
-	double remaining_secs = compute_remaining_time(age, total_sent, total_iterations);
+	double remaining_secs =
+	    compute_remaining_time(age, total_sent, total_iterations);
 
 	// export amount of time the scan has been running
 	if (age < WARMUP_PERIOD) {
@@ -220,9 +236,14 @@ static void export_stats(int_status_t *intrnl, export_status_t *exp,
 	if (!total_sent) {
 		exp->hitrate = 0;
 		exp->app_hitrate = 0;
+	} else if (zconf.dedup_method == DEDUP_METHOD_NONE) {
+			// receive thread won't de-dupe packets, so don't need to care about number of probes
+			exp->hitrate = recv_success * 100.0 /  total_sent;
+			exp->app_hitrate = app_success * 100.0 / total_sent;
 	} else {
-		exp->hitrate = recv_success * 100.0 / total_sent;
-		exp->app_hitrate = app_success * 100.0 / total_sent;
+		// receive thread will de-dupe packets for a given target, so we'll divide by the number of probes to get accurate hit-rate
+		exp->hitrate = recv_success * 100.0 / (total_sent / zconf.packet_streams);
+		exp->app_hitrate = app_success * 100.0 / (total_sent / zconf.packet_streams);
 	}
 
 	if (age > WARMUP_PERIOD && exp->hitrate < zconf.min_hitrate) {
@@ -312,9 +333,9 @@ static void onscreen_appsuccess(export_status_t *exp)
 	// this when probe module handles application-level success rates
 	if (!exp->complete) {
 		fprintf(stderr,
-			"%5s %0.0f%%%s; sent: %"PRIu64" %sp/s (%sp/s avg); "
-			"recv: %u %sp/s (%sp/s avg); "
-			"app success: %u %sp/s (%sp/s avg); "
+			"%5s %0.0f%%%s; sent: %" PRIu64 " %sp/s (%sp/s avg); "
+			"recv: %" PRIu64 " %sp/s (%sp/s avg); "
+			"app success: %" PRIu64 " %sp/s (%sp/s avg); "
 			"drops: %sp/s (%sp/s avg); "
 			"hitrate: %0.2f%% "
 			"app hitrate: %0.2f%%\n",
@@ -328,9 +349,9 @@ static void onscreen_appsuccess(export_status_t *exp)
 			exp->hitrate, exp->app_hitrate);
 	} else {
 		fprintf(stderr,
-			"%5s %0.0f%%%s; sent: %"PRIu64" done (%sp/s avg); "
-			"recv: %u %sp/s (%sp/s avg); "
-			"app success: %u %sp/s (%sp/s avg); "
+			"%5s %0.0f%%%s; sent: %" PRIu64 " done (%sp/s avg); "
+			"recv: %" PRIu64 " %sp/s (%sp/s avg); "
+			"app success: %" PRIu64 " %sp/s (%sp/s avg); "
 			"drops: %sp/s (%sp/s avg); "
 			"hitrate: %0.2f%% "
 			"app hitrate: %0.2f%%\n",
@@ -348,8 +369,8 @@ static void onscreen_generic(export_status_t *exp)
 {
 	if (!exp->complete) {
 		fprintf(stderr,
-			"%5s %0.0f%%%s; send: %"PRIu64" %sp/s (%sp/s avg); "
-			"recv: %u %sp/s (%sp/s avg); "
+			"%5s %0.0f%%%s; send: %" PRIu64 " %sp/s (%sp/s avg); "
+			"recv: %" PRIu64 " %sp/s (%sp/s avg); "
 			"drops: %sp/s (%sp/s avg); "
 			"hitrate: %0.2f%%\n",
 			exp->time_past_str, exp->percent_complete,
@@ -360,8 +381,8 @@ static void onscreen_generic(export_status_t *exp)
 			exp->pcap_drop_avg_str, exp->hitrate);
 	} else {
 		fprintf(stderr,
-			"%5s %0.0f%%%s; send: %"PRIu64" done (%sp/s avg); "
-			"recv: %u %sp/s (%sp/s avg); "
+			"%5s %0.0f%%%s; send: %" PRIu64 " done (%sp/s avg); "
+			"recv: %" PRIu64 " %sp/s (%sp/s avg); "
 			"drops: %sp/s (%sp/s avg); "
 			"hitrate: %0.2f%%\n",
 			exp->time_past_str, exp->percent_complete,
@@ -408,11 +429,11 @@ static void update_status_updates_file(export_status_t *exp, FILE *f)
 	fprintf(f,
 		"%s,%u,%u,"
 		"%f,%f,%u,"
-		"%"PRIu64",%.0f,%.0f,"
-		"%u,%.0f,%.0f,"
-		"%"PRIu64",%.0f,%.0f,"
-		"%u,%.0f,%.0f,"
-		"%u,%.0f,%.0f\n",
+		"%" PRIu64 ",%.0f,%.0f,"
+		"%" PRIu64 ",%.0f,%.0f,"
+		"%" PRIu64 ",%.0f,%.0f,"
+		"%" PRIu64 ",%.0f,%.0f,"
+		"%" PRIu64 ",,%.0f,%.0f\n",
 		timestamp, exp->time_past, exp->time_remaining,
 		exp->percent_complete, exp->hitrate, exp->send_threads,
 		exp->total_sent, exp->send_rate, exp->send_rate_avg,
@@ -450,31 +471,40 @@ void monitor_init(void)
 	}
 }
 
+void export_then_update(int_status_t *internal_status, iterator_t *it, export_status_t *export_status, pthread_mutex_t *lock)
+{
+	update_pcap_stats(lock);
+	export_stats(internal_status, export_status, it);
+	log_drop_warnings(export_status);
+	check_min_hitrate(export_status);
+	check_max_sendto_failures(export_status);
+	if (!zconf.quiet) {
+		lock_file(stderr);
+		if (zconf.fsconf.app_success_index >= 0) {
+			onscreen_appsuccess(export_status);
+		} else {
+			onscreen_generic(export_status);
+		}
+		unlock_file(stderr);
+	}
+	if (status_fd) {
+		update_status_updates_file(export_status, status_fd);
+	}
+}
+
 void monitor_run(iterator_t *it, pthread_mutex_t *lock)
 {
 	int_status_t *internal_status = xmalloc(sizeof(int_status_t));
 	export_status_t *export_status = xmalloc(sizeof(export_status_t));
 
+	// wait for the scanning process to finish
 	while (!(zsend.complete && zrecv.complete)) {
-		update_pcap_stats(lock);
-		export_stats(internal_status, export_status, it);
-		log_drop_warnings(export_status);
-		check_min_hitrate(export_status);
-		check_max_sendto_failures(export_status);
-		if (!zconf.quiet) {
-			lock_file(stderr);
-			if (zconf.fsconf.app_success_index >= 0) {
-				onscreen_appsuccess(export_status);
-			} else {
-				onscreen_generic(export_status);
-			}
-			unlock_file(stderr);
-		}
-		if (status_fd) {
-			update_status_updates_file(export_status, status_fd);
-		}
+		export_then_update(internal_status, it, export_status, lock);
 		sleep(UPDATE_INTERVAL);
 	}
+	// final update
+	export_then_update(internal_status, it, export_status, lock);
+
 	if (!zconf.quiet) {
 		lock_file(stderr);
 		fflush(stderr);
