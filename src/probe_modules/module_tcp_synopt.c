@@ -119,7 +119,7 @@ int tcpsynopt_init_perthread(void* buf, macaddr_t *src,
 }
 
 int tcpsynopt_make_packet(void *buf, size_t *buf_len, ipaddr_n_t src_ip, ipaddr_n_t dst_ip, port_n_t dport,
-		uint8_t ttl, uint32_t *validation, int probe_num, __attribute__((unused)) void *arg)
+		uint8_t ttl, uint32_t *validation, int probe_num, uint16_t ip_id, __attribute__((unused)) void *arg)
 {
 	struct ether_header *eth_header = (struct ether_header *)buf;
 	struct ip *ip_header = (struct ip*)(&eth_header[1]);
@@ -237,7 +237,6 @@ probe_module_t module_tcp_synopt = {
 	.pcap_snaplen = 96+10*4, //max len
 	.port_args = 1,
 	.global_initialize = &tcpsynopt_global_initialize,
-	.thread_initialize = &tcpsynopt_init_perthread,
 	.make_packet = &tcpsynopt_make_packet,
 	.print_packet = &tcpsynopt_print_packet,
 	.process_packet = &tcpsynopt_process_packet,

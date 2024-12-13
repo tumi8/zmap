@@ -266,7 +266,7 @@ int ipv6_udp_init_perthread(void* buf, macaddr_t *src,
 }
 
 int ipv6_udp_make_packet(void *buf, size_t *buf_len, __attribute__((unused)) ipaddr_n_t src_ip,
-		__attribute__((unused)) ipaddr_n_t dst_ip, port_n_t dport, uint8_t ttl, uint32_t *validation, int probe_num, void *arg)
+		__attribute__((unused)) ipaddr_n_t dst_ip, port_n_t dport, uint8_t ttl, uint32_t *validation, int probe_num, uint16_t ip_id, void *arg)
 {
 	// From module_ipv6_udp_dns
 	struct ether_header *eth_header = (struct ether_header *) buf;
