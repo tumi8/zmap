@@ -13,6 +13,9 @@
 #include "../lib/logger.h"
 #include "validate.h"
 
+#define AES_BLOCK_WORDS 4
+
+
 static aes128_ctx_t *aes128 = NULL;
 
 /*
@@ -56,8 +59,8 @@ void validate_gen_ipv6(const struct in6_addr *src, const struct in6_addr *dst,
 {
 	assert(aes128);
 
-	uint32_t aes_input[AES128_BLOCK_BYTES];
-	for (int i = 0; i < AES128_BLOCK_BYTES; i++) {
+	uint32_t aes_input[AES_BLOCK_WORDS];
+	for (int i = 0; i < AES_BLOCK_WORDS; i++) {
 		// XOR IPv6 src and dst
 		aes_input[i] = ((uint32_t *) src)[i] ^ ((uint32_t *) dst)[i];
 	}
