@@ -110,21 +110,6 @@ int ipv6_tcp_synopt_global_initialize(struct state_conf *conf)
 	return EXIT_SUCCESS;
 }
 
-int ipv6_tcp_synopt_init_perthread(void* buf, macaddr_t *src,
-		macaddr_t *gw, port_h_t dst_port,
-		__attribute__((unused)) void **arg_ptr)
-{
-	memset(buf, 0, MAX_PACKET_SIZE);
-	struct ether_header *eth_header = (struct ether_header *) buf;
-	make_eth_header_ethertype(eth_header, src, gw, ETHERTYPE_IPV6);
-	struct ip6_hdr *ip6_header = (struct ip6_hdr*)(&eth_header[1]);
-	uint16_t payload_len = ZMAPV6_TCP_SYNOPT_TCP_HEADER_LEN+tcp_send_opts_len;
-	make_ip6_header(ip6_header, IPPROTO_TCP, payload_len);
-	struct tcphdr *tcp_header = (struct tcphdr*)(&ip6_header[1]);
-	make_tcp_header(tcp_header, TH_SYN);
-	return EXIT_SUCCESS;
-}
-
 static int ipv6_tcp_synopt_prepare_packet(void *buf, macaddr_t *src, macaddr_t *gw,
 				  UNUSED void *arg_ptr)
 {

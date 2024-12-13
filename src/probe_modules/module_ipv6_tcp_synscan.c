@@ -47,11 +47,9 @@ int ipv6_synscan_global_initialize(struct state_conf *state)
 	return EXIT_SUCCESS;
 }
 
-int ipv6_synscan_init_perthread(void* buf, macaddr_t *src,
-		macaddr_t *gw, port_h_t dst_port,
-		__attribute__((unused)) void **arg_ptr)
+static int ipv6_tcp_synscan_prepare_packet(void *buf, macaddr_t *src, macaddr_t *gw,
+				  UNUSED void *arg_ptr)
 {
-	memset(buf, 0, MAX_PACKET_SIZE);
 	struct ether_header *eth_header = (struct ether_header *) buf;
 	make_eth_header_ethertype(eth_header, src, gw, ETHERTYPE_IPV6);
 	struct ip6_hdr *ip6_header = (struct ip6_hdr*)(&eth_header[1]);
@@ -117,14 +115,14 @@ int ipv6_synscan_validate_packet(const struct ip *ip_hdr, uint32_t len,
 		return 0;
 	}
 	struct tcphdr *tcp_hdr = (struct tcphdr*) (&ipv6_hdr[1]);
-	uint16_t sport = tcp_hdr->th_sport;
-	uint16_t dport = tcp_hdr->th_dport;
+	uint16_t sport = ntohs(tcp_hdr->th_sport);
+	uint16_t dport = ntohs(tcp_hdr->th_dport);
 	// validate source port
 	if (should_validate_src_port && !check_src_port(sport, ports)) {
 		return PACKET_INVALID;
 	}
 	// validate destination port
-	if (!check_dst_port(ntohs(dport), num_ports, validation)) {
+	if (!check_dst_port(dport, num_ports, validation)) {
 		return 0;
 	}
 	// validate tcp acknowledgement number
@@ -174,7 +172,7 @@ probe_module_t module_ipv6_tcp_synscan = {
 	.pcap_snaplen = 116, // was 96 for IPv4
 	.port_args = 1,
 	.global_initialize = &ipv6_synscan_global_initialize,
-	.thread_initialize = &ipv6_synscan_init_perthread,
+	.prepare_packet = &ipv6_tcp_synscan_prepare_packet,
 	.make_packet = &ipv6_synscan_make_packet,
 	.print_packet = &ipv6_synscan_print_packet,
 	.process_packet = &ipv6_synscan_process_packet,

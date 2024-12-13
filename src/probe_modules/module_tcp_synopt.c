@@ -102,12 +102,10 @@ int tcpsynopt_global_initialize(struct state_conf *conf)
 	return EXIT_SUCCESS;
 }
 
-
-int tcpsynopt_init_perthread(void* buf, macaddr_t *src,
-		macaddr_t *gw, port_h_t dst_port,
-		__attribute__((unused)) void **arg_ptr)
+static int tcpsynopt_prepare_packet(void *buf, macaddr_t *src, macaddr_t *gw,
+				  UNUSED void *arg_ptr)
 {
-	memset(buf, 0, MAX_PACKET_SIZE);
+		memset(buf, 0, MAX_PACKET_SIZE);
 	struct ether_header *eth_header = (struct ether_header *) buf;
 	make_eth_header(eth_header, src, gw);
 	struct ip *ip_header = (struct ip*)(&eth_header[1]);
@@ -183,14 +181,14 @@ int tcpsynopt_validate_packet(const struct ip *ip_hdr, uint32_t len,
 		return 0;
 	}
 	struct tcphdr *tcp = (struct tcphdr*)((char *) ip_hdr + 4*ip_hdr->ip_hl);
-	uint16_t sport = tcp->th_sport;
-	uint16_t dport = tcp->th_dport;
+	uint16_t sport = ntohs(tcp->th_sport);
+	uint16_t dport = ntohs(tcp->th_dport);
 	// validate source port
 	if (should_validate_src_port && !check_src_port(sport, ports)) {
 		return PACKET_INVALID;
 	}
 	// validate destination port
-	if (!check_dst_port(ntohs(dport), num_ports, validation)) {
+	if (!check_dst_port(dport, num_ports, validation)) {
 		//printf("validating... dport fail!\n");
 		return 0;
 	}
@@ -237,6 +235,7 @@ probe_module_t module_tcp_synopt = {
 	.pcap_snaplen = 96+10*4, //max len
 	.port_args = 1,
 	.global_initialize = &tcpsynopt_global_initialize,
+	.prepare_packet = &tcpsynopt_prepare_packet,
 	.make_packet = &tcpsynopt_make_packet,
 	.print_packet = &tcpsynopt_print_packet,
 	.process_packet = &tcpsynopt_process_packet,
