@@ -92,11 +92,10 @@ int quic_initial_global_cleanup(
 	return EXIT_SUCCESS;
 }
 
-int quic_initial_init_perthread(void *buf, macaddr_t *src, macaddr_t *gw,
-				__attribute__((unused)) port_h_t dst_port,
-				__attribute__((unused)) void **arg_ptr)
+static int quic_initial_prepare_packet(void *buf, macaddr_t *src, macaddr_t *gw,
+				  UNUSED void *arg_ptr)
 {
-	// set length of udp msg
+		// set length of udp msg
 	int udp_send_msg_len = padding_length + sizeof(quic_long_hdr);
 	//log_debug("prepare", "UDP PAYLOAD LEN: %d", udp_send_msg_len);
 
@@ -325,9 +324,9 @@ probe_module_t module_quic_initial = {
     // this gets replaced by the actual payload we expect to get back
     .pcap_snaplen = 1500,
     .port_args = 1,
-    .thread_initialize = &quic_initial_init_perthread,
     .global_initialize = &quic_initial_global_initialize,
-    .make_packet = &quic_initial_make_packet,
+    .prepare_packet = &quic_initial_prepare_packet,
+	.make_packet = &quic_initial_make_packet,
     .print_packet = &quic_initial_print_packet,
     .validate_packet = &quic_initial_validate_packet,
     .process_packet = &quic_initial_process_packet,
