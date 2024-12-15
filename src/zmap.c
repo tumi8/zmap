@@ -708,6 +708,7 @@ int main(int argc, char *argv[])
 				  "target ports (-p) required for %s probe",
 				  zconf.probe_module->name);
 		}
+
 	} else {
 		if (args.target_ports_given) {
 			log_fatal("zmap",
@@ -723,6 +724,10 @@ int main(int argc, char *argv[])
 	} else {
 		char *line = strdup("0");
 		parse_ports(line, zconf.ports);
+	}
+
+	if (zconf.ipv6_target_filename && zconf.ports->port_count > 1) {
+		log_fatal("ipv6", "IPv6 currently only supports one port");
 	}
 
 	if (args.dedup_method_given) {
