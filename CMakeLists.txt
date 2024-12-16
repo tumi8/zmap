@@ -7,6 +7,8 @@ option(ENABLE_LOG_TRACE "Enable log trace messages" OFF)
 option(RESPECT_INSTALL_PREFIX_CONFIG "Respect CMAKE_INSTALL_PREFIX for /etc" OFF)
 option(WITH_WERROR "Build with -Werror" OFF)
 option(WITH_PFRING "Build with PF_RING ZC for send (10 GigE)" OFF)
+option(WITH_NETMAP "Build with netmap(4) for send/recv (10+ GigE)" OFF)
+option(WITH_AES_HW "Build with AES hardware acceleration (x86_64 and arm64)" OFF)
 option(FORCE_CONF_INSTALL "Overwrites existing configuration files at install" OFF)
 
 if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
@@ -15,7 +17,7 @@ else()
     set(USING_GCC "YES")
 endif()
 
-if("${CMAKE_SYSTEM_NAME}" MATCHES "FreeBSD" OR "${CMAKE_SYSTEM_NAME}" MATCHES "NetBSD" OR "${CMAKE_SYSTEM_NAME}" MATCHES "DragonFly")
+if("${CMAKE_SYSTEM_NAME}" MATCHES "FreeBSD" OR "${CMAKE_SYSTEM_NAME}" MATCHES "NetBSD" OR "${CMAKE_SYSTEM_NAME}" MATCHES "DragonFly" OR "${CMAKE_SYSTEM_NAME}" MATCHES "MidnightBSD")
     set(BSD "YES")
 endif()
 
@@ -41,6 +43,53 @@ string(REPLACE ";" " "  GCCWARNINGS "${GCCWARNINGS}")
 if(WITH_WERROR)
     set(GCCWARNINGS "${GCCWARNINGS} -Werror")
 endif()
+
+# Check for dependencies
+find_library(FOUND_JUDY HINTS /usr/include/ NAMES Judy libjudy-dev judy dev-libs/judy judy-devel)
+if (NOT FOUND_JUDY)
+    message(FATAL_ERROR "Missing dependency: did not find Judy library, please install Judy or equivalent. More details in INSTALL.md")
+endif()
+
+find_library(FOUND_GMP HINTS /usr/include/ NAMES libgmp3-dev gmp dev-libs/gmp gmp-devel)
+if (NOT FOUND_GMP)
+    message(FATAL_ERROR "Missing dependency: did not find gmp library, please install gmp or equivalent. More details in INSTALL.md")
+endif()
+
+find_library(FOUND_PCAP HINTS /usr/include/ NAMES pcap libpcap-dev libpcap net-libs/libpcap libpcap-devel)
+if (NOT FOUND_PCAP)
+    message(FATAL_ERROR "Missing dependency: did not find libpcap library, please install libpcap or equivalent. More details in INSTALL.md")
+endif()
+
+find_program(FOUND_FLEX HINTS /usr/include/ /usr/bin/ NAMES flex sys-devel/flex)
+if (NOT FOUND_FLEX)
+    message(FATAL_ERROR "Missing dependency: did not find flex, please install flex or equivalent. More details in INSTALL.md")
+endif()
+find_program(FOUND_BYACC HINTS /usr/include/ NAMES byacc dev-util/byacc)
+if (NOT FOUND_BYACC)
+    message(FATAL_ERROR "Missing dependency: did not find byacc, please install byacc or equivalent. More details in INSTALL.md")
+endif()
+find_library(FOUND_JSON HINTS /usr/include/ NAMES json libjson-c-dev json-c-devel json-c dev-libs/json-c)
+if (NOT FOUND_JSON)
+    message(FATAL_ERROR "Missing dependency: did not find libjson-c, please install libjson-c or equivalent. More details in INSTALL.md")
+endif()
+find_program(FOUND_GENGETOPT HINTS /usr/include/ NAMES gengetopt dev-util/gengetopt)
+if (NOT FOUND_GENGETOPT)
+    message(FATAL_ERROR "Missing dependency: did not find gengetopt, please install gengetopt or equivalent. More details in INSTALL.md")
+endif()
+
+find_path(FOUND_LIBUNISTRING # UniString is neither a library or a program, but install several header files in the include path
+        NAMES unistr.h
+        PATH_SUFFIXES include
+)
+if (NOT FOUND_LIBUNISTRING)
+    message(FATAL_ERROR "Missing dependency: did not find libunistring, please install libunistring or equivalent. More details in INSTALL.md")
+endif()
+
+find_program(FOUND_PKGCONFIG HINTS /usr/include/ NAMES pkg-config dev-util/pkgconf)
+if (NOT FOUND_PKGCONFIG)
+    message(FATAL_ERROR "Missing dependency: did not find pkg-config, please install pkg-config or equivalent. More details in INSTALL.md")
+endif()
+
 
 if(ENABLE_DEVELOPMENT)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -ggdb")
@@ -81,8 +130,18 @@ if(WITH_PFRING)
     set(PFRING_LIBRARIES pfring rt numa)
 endif()
 
+if(WITH_NETMAP)
+    add_definitions("-DNETMAP")
+endif()
+
+if(WITH_AES_HW)
+    add_definitions("-DAES_HW")
+endif()
+
+set(JUDY_LIBRARIES "Judy")
+
 # Standard FLAGS
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu99")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu11")
 if(NOT APPLE)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pthread")
 endif()
@@ -100,6 +159,10 @@ if(APPLE)
     endif()
     if(EXISTS /usr/local/lib)
         link_directories(/usr/local/lib)
+    endif()
+    if(EXISTS /opt/homebrew)
+        include_directories(/opt/homebrew/include)
+        link_directories(/opt/homebrew/lib)
     endif()
 endif()
 
@@ -125,11 +188,40 @@ endif()
 
 FILE(GLOB CONF_FILES "${PROJECT_SOURCE_DIR}/conf/*")
 
+# Upgrade path for old conf files - this is necessary for users upgrading from a version where we called the blocklist file blacklist.conf
+# Must occur before the install command
+if(EXISTS "${CONFIG_DESTINATION}/blacklist.conf")
+    message(STATUS "Old configuration file detected at ${CONFIG_DESTINATION}/blacklist.conf, creating a symlink to ${CONFIG_DESTINATION}/blocklist.conf to match the new flag conventions")
+    execute_process(
+            COMMAND ${CMAKE_COMMAND} -E create_symlink "${CONFIG_DESTINATION}/blacklist.conf" "${CONFIG_DESTINATION}/blocklist.conf"
+    )
+    message(STATUS "blocklist.conf has been successfully symlinked to blacklist.conf.")
+endif()
+
+# If the zmap.conf file exists and contains the old blacklist-file option, replace it with the new blocklist-file option
+if(EXISTS "${CONFIG_DESTINATION}/zmap.conf")
+    file(READ "${CONFIG_DESTINATION}/zmap.conf" FILE_CONTENTS)
+
+    if(FILE_CONTENTS MATCHES "blacklist-file \"${CONFIG_DESTINATION}/blacklist.conf\"")
+        string(REPLACE "blacklist-file \"${CONFIG_DESTINATION}/blacklist.conf\""
+                "blocklist-file \"${CONFIG_DESTINATION}/blocklist.conf\""
+                FILE_CONTENTS
+                "${FILE_CONTENTS}")
+        file(WRITE "${CONFIG_DESTINATION}/zmap.conf" "${FILE_CONTENTS}")
+
+        message(STATUS "Blacklist to blocklist file path successfully updated in ${CONFIG_DESTINATION}/zmap.conf.")
+    else()
+        message(STATUS "blacklist-file option does not exist in ${CONFIG_DESTINATION}/zmap.conf. No changes necessary to upgrade ZMap configuration file.")
+    endif()
+else()
+    message(STATUS "No ZMap configuration file detected at ${CONFIG_DESTINATION}/zmap.conf. No changes necessary to upgrade ZMap configuration file.")
+endif()
+
 message(STATUS "Default ZMap configuration file location is /etc/zmap")
 foreach(EACH_CONF ${CONF_FILES})
     get_filename_component(CONF_BASENAME ${EACH_CONF} NAME)
     message(STATUS "Checking if ${CONF_BASENAME} exists there...")
-    if(NOT EXISTS "/etc/zmap/${CONF_BASENAME}")
+    if(NOT EXISTS "${CONFIG_DESTINATION}/${CONF_BASENAME}")
         install(FILES ${EACH_CONF} DESTINATION ${CONFIG_DESTINATION})
     elseif(FORCE_CONF_INSTALL)
         message(WARNING "FORCE_CONF_INSTALL will overwrite any existing configuration files")

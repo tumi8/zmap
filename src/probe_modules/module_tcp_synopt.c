@@ -9,6 +9,7 @@
 // probe module for performing TCP Opt scans
 // based on TCP SYN module, with changes by Quirin Scheitle and Markus Sosnowski
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -26,6 +27,7 @@
 #include "module_tcp_synopt.h"
 
 
+
 probe_module_t module_tcp_synopt;
 static uint32_t num_ports;
 
@@ -33,6 +35,9 @@ static uint32_t num_ports;
 
 #define ZMAP_TCP_SYNOPT_TCP_HEADER_LEN 20
 #define ZMAP_TCP_SYNOPT_PACKET_LEN 54
+#define SOURCE_PORT_VALIDATION_MODULE_DEFAULT true; // default to validating source port
+static bool should_validate_src_port = SOURCE_PORT_VALIDATION_MODULE_DEFAULT
+
 
 static char *tcp_send_opts = NULL;
 static int tcp_send_opts_len = 0;
@@ -109,11 +114,11 @@ int tcpsynopt_init_perthread(void* buf, macaddr_t *src,
 	uint16_t len = htons(sizeof(struct ip) + ZMAP_TCP_SYNOPT_TCP_HEADER_LEN + tcp_send_opts_len);
 	make_ip_header(ip_header, IPPROTO_TCP, len);
 	struct tcphdr *tcp_header = (struct tcphdr*)(&ip_header[1]);
-	make_tcp_header(tcp_header, dst_port, TH_SYN);
+	make_tcp_header(tcp_header, TH_SYN);
 	return EXIT_SUCCESS;
 }
 
-int tcpsynopt_make_packet(void *buf, size_t *buf_len, ipaddr_n_t src_ip, ipaddr_n_t dst_ip,
+int tcpsynopt_make_packet(void *buf, size_t *buf_len, ipaddr_n_t src_ip, ipaddr_n_t dst_ip, port_n_t dport,
 		uint8_t ttl, uint32_t *validation, int probe_num, __attribute__((unused)) void *arg)
 {
 	struct ether_header *eth_header = (struct ether_header *)buf;
@@ -128,6 +133,7 @@ int tcpsynopt_make_packet(void *buf, size_t *buf_len, ipaddr_n_t src_ip, ipaddr_
 
 	tcp_header->th_sport = htons(get_src_port(num_ports,
 				probe_num, validation));
+	tcp_header->th_dport = dport;
 	tcp_header->th_seq = tcp_seq;
 
     memcpy(opts, tcp_send_opts, tcp_send_opts_len);
@@ -163,7 +169,8 @@ void tcpsynopt_print_packet(FILE *fp, void* packet)
 
 int tcpsynopt_validate_packet(const struct ip *ip_hdr, uint32_t len,
 		__attribute__((unused))uint32_t *src_ip,
-		uint32_t *validation)
+		uint32_t *validation,
+		const struct port_conf *ports)
 {
 	if (ip_hdr->ip_p != IPPROTO_TCP) {
 		return 0;
@@ -179,14 +186,17 @@ int tcpsynopt_validate_packet(const struct ip *ip_hdr, uint32_t len,
 	uint16_t sport = tcp->th_sport;
 	uint16_t dport = tcp->th_dport;
 	// validate source port
-	if (ntohs(sport) != zconf.target_port) {
-		//printf("validating... sport fail!\n");
-		return 0;
+	if (should_validate_src_port && !check_src_port(sport, ports)) {
+		return PACKET_INVALID;
 	}
 	// validate destination port
 	if (!check_dst_port(ntohs(dport), num_ports, validation)) {
 		//printf("validating... dport fail!\n");
 		return 0;
+	}
+	// check whether we'll ever send to this IP during the scan
+	if (!blocklist_is_allowed(*src_ip)) {
+		return PACKET_INVALID;
 	}
 	// validate tcp acknowledgement number
 	if (htonl(tcp->th_ack) != htonl(validation[0])+1) {

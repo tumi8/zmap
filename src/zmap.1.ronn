@@ -3,7 +3,7 @@ zmap(1) - The Fast Internet Scanner
 
 ## SYNOPSIS
 
-zmap [ -p &lt;port> ] [ -o &lt;outfile&gt; ] [ OPTIONS... ] [ ip/hostname/range ]
+zmap [ -p &lt;port(s)&gt; ] [ -o &lt;outfile&gt; ] [ OPTIONS... ] [ ip/hostname/range ]
 
 ## DESCRIPTION
 
@@ -19,8 +19,9 @@ on a gigabit network connection, reaching ~98% theoretical line speed.
      IP addresses or DNS hostnames to scan. Accepts IP ranges in CIDR block
      notation. Defaults to 0.0.0/8
 
-   * `-p`, `--target-port=port`:
-     TCP or UDP port number to scan (for SYN scans and basic UDP scans)
+   * `-p`, `--target-ports=port(s)`:
+     List of TCP/UDP ports and/or port ranges to scan (e.g., 80,443,100-105).
+     Use '*' to scan all ports, including port 0.
 
    * `-o`, `--output-file=name`:
      When using an output module that uses a file, write results to this file.
@@ -62,7 +63,9 @@ on a gigabit network connection, reaching ~98% theoretical line speed.
    * `-n`, `--max-targets=n`:
      Cap the number of targets to probe. This can either be a number (e.g. -n
      1000) or a percentage (e.g. -n 0.1%) of the scannable address space
-     (after excluding blocklist)
+     (after excluding blocklist). A target is an IP/port pair, if scanning multiple
+     ports, and an IP otherwise. In the case of percents and multiple ports, the percent
+     is of the total number of IP/port pair combinations.
 
    * `-N`, `--max-results=n`:
      Exit after receiving this many results
@@ -78,16 +81,19 @@ on a gigabit network connection, reaching ~98% theoretical line speed.
      addresses in the same order for multiple ZMap runs.
 
    * `-P`, `--probes=n`:
-     Number of probes to send to each IP (default=1)
+     Number of probes to send to each IP/Port pair (default=1). Since ZMap composes Ethernet
+     frames directly, probes can be lost en-route to destination. Increasing the
+     --probes increases the chance that an online host will receive a probe in an
+     unreliable network. This is contrasted with `--retries` which just gives the
+     number of attempts to send a single probe on the source NIC.
 
    * `--retries=n`:
      Number of times to try resending a packet if the sendto call fails (default=10)
 
    * `--batch=n`:
-     Number of packets to send in a burst between checks to the ratelimit. A
-     batch size above 1 allows the sleep-based rate-limiter to be used with
-     proportionally higher rates. This can reduce CPU usage, in exchange for a
-     bursty send rate. (default=1)
+     Number of packets to batch before calling the appropriate syscall to send. Used
+     to take advantage of Linux's `sendmmsg` syscall to send the entire batch at once.
+     Only available on Linux, other OS's will send each packet individually. (default=64)
 
 ### SCAN SHARDING ###
 
@@ -105,6 +111,13 @@ on a gigabit network connection, reaching ~98% theoretical line speed.
    * `-s`, `--source-port=port|range`:
      Source port(s) to send packets from
 
+   * `--validate-source-port=enable|disable`:
+     Used as an override to enable/disable source port validation. Source port validation will
+     check that a received probe response's src port matches the dst port of the probe
+     sent to that IP/port pair. This ensures that multiple ZMap scans to the same hosts
+     but to different ports will not interfere with each other. This overrides each modules
+     default behavior on whether or not to validate source ports with probe responses.
+
    * `-S`, `--source-ip=ip|range`:
      Source address(es) to send packets from. Either single IP or range (e.g.
      10.0.0.1-10.0.0.9)
@@ -120,6 +133,14 @@ on a gigabit network connection, reaching ~98% theoretical line speed.
 
    * `-X`, `--iplayer`:
      Send IP layer packets instead of ethernet packets (for non-Ethernet interface)
+
+   * `--netmap-wait-ping=ip`:
+     (Netmap only)
+     Wait for ip to respond to ICMP Echo request before commencing scan.
+     Useful if connected to a switch with STP enabled, where the PHY reset
+     that is needed for entering and leaving Netmap mode will cause the switch
+     to mute the port until the spanning tree protocol has determined that
+     the link should be set into forward state.
 
 ### PROBE OPTIONS ###
 
@@ -170,6 +191,28 @@ fields, and write filters over the output fields.
      useful if you're piping results into another application that expects only
      data.
 
+
+### RESPONSE DEDUPLICATION ###
+
+Hosts will oftentimes send multiple responses to a probe (either because the
+scanner doesn't send back a RST packet or because the host has a misimplemented
+TCP stack. To address this, ZMap will attempt to deduplicate responsive (ip,port)
+targets.
+
+
+   * `--dedup-method`:
+     Specifies the method ZMap will use to deduplicate responses. Options are:
+     full, window, and none. Full deduplication uses a 32-bit bitmap and
+     guarantees that no duplicates will be emitted. However, full-deduplication
+     requires around 500MB of memory for a single port. We do not support full
+     deduplication for multiple ports. Window uses a sliding window of the last
+     (user-defined) number of responses as set by --dedup-window-size. None will
+     prevent any deduplication.
+
+   * `--dedup-window-size=targets`:
+     Specifies the size of the sliding window as the last n target responses to be
+     used for deduplication. Only applicable if using window deduplication.
+
 ### LOGGING AND METADATA OPTIONS ###
 
    * `-q`, `--quiet`:
@@ -203,7 +246,8 @@ fields, and write filters over the output fields.
 
    * `-T`, `--sender-threads=n`:
      Threads used to send packets. ZMap will attempt to detect the optimal
-     number of send threads based on the number of processor cores.
+     number of send threads based on the number of processor cores. Defaults to
+     min(4, number of processor cores on host - 1).
 
    * `-C`, `--config=filename`:
      Read a configuration file, which can specify any other options.

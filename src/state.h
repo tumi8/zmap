@@ -23,8 +23,14 @@
 #include "filter.h"
 #include "types.h"
 
-#define MAX_PACKET_SIZE 4096
 #define MAC_ADDR_LEN_BYTES 6
+
+#define DEDUP_METHOD_DEFAULT 0
+#define DEDUP_METHOD_NONE 1
+#define DEDUP_METHOD_FULL 2
+#define DEDUP_METHOD_WINDOW 3
+
+extern const char *const DEDUP_METHOD_NAMES[];
 
 struct probe_module;
 struct output_module;
@@ -41,16 +47,19 @@ struct fieldset_conf {
 // global configuration
 struct state_conf {
 	int log_level;
-	port_h_t target_port;
+	struct port_conf *ports;
 	port_h_t source_port_first;
 	port_h_t source_port_last;
+	// overrides a probe module's default behavior and forces it to perform source port validation, if supported
+	// -1 = unset, 0 = validation disabled, 1 = validation enabled
+	int8_t validate_source_port_override;
 	// maximum number of packets that the scanner will send before
 	// terminating
-	uint32_t max_targets;
+	uint64_t max_targets;
 	// maximum number of seconds that scanner will run before terminating
 	uint32_t max_runtime;
 	// maximum number of results before terminating
-	uint32_t max_results;
+	uint64_t max_results;
 	// name of network interface that
 	// will be utilized for sending/receiving
 	char *iface;
@@ -64,7 +73,7 @@ struct state_conf {
 	int cooldown_secs;
 	// number of sending threads
 	uint8_t senders;
-	uint8_t batch;
+	uint16_t batch;
 	uint32_t pin_cores_len;
 	uint32_t *pin_cores;
 	// should use CLI provided randomization seed instead of generating
@@ -118,7 +127,7 @@ struct state_conf {
 	int ignore_invalid_hosts;
 	int syslog;
 	int recv_ready;
-	int num_retries;
+	int retries;
 	uint64_t total_allowed;
 	uint64_t total_disallowed;
 	int max_sendto_failures;
@@ -128,6 +137,8 @@ struct state_conf {
 	int data_link_size;
 	int default_mode;
 	int no_header_row;
+	int dedup_method;
+	int dedup_window_size;
 #ifdef PFRING
 	struct {
 		pfring_zc_cluster *cluster;
@@ -137,6 +148,14 @@ struct state_conf {
 		pfring_zc_pkt_buff **buffers;
 		pfring_zc_buffer_pool *prefetches;
 	} pf;
+#endif
+#ifdef NETMAP
+	struct {
+		int nm_fd;
+		void *nm_mem;
+		struct netmap_if *nm_if;
+		uint32_t wait_ping_dstip;
+	} nm;
 #endif
 };
 extern struct state_conf zconf;
@@ -148,15 +167,14 @@ struct state_send {
 	double start;
 	double finish;
 	uint64_t packets_sent;
-	uint64_t hosts_scanned;
-	uint64_t blocklisted;
-	uint64_t allowlisted;
+	uint64_t targets_scanned;
 	int warmup;
 	int complete;
 	uint32_t first_scanned;
-	uint32_t max_targets;
+	uint64_t max_targets;
 	uint32_t sendto_failures;
 	uint32_t max_index;
+	uint16_t max_port_index;
 	uint8_t **list_of_ips_pbm;
 };
 extern struct state_send zsend;
@@ -164,41 +182,47 @@ extern struct state_send zsend;
 // global receiver stats
 struct state_recv {
 	// valid responses classified as "success"
-	uint32_t success_total;
+	uint64_t success_total;
 	// unique IPs that sent valid responses classified as "success"
-	uint32_t success_unique;
+	uint64_t success_unique;
 	// valid responses classified as "success"
-	uint32_t app_success_total;
+	uint64_t app_success_total;
 	// unique IPs that sent valid responses classified as "success"
-	uint32_t app_success_unique;
+	uint64_t app_success_unique;
 	// valid responses classified as "success" received during cooldown
-	uint32_t cooldown_total;
+	uint64_t cooldown_total;
 	// unique IPs that first sent valid "success"es during cooldown
-	uint32_t cooldown_unique;
+	uint64_t cooldown_unique;
 	// valid responses NOT classified as "success"
-	uint32_t failure_total;
+	uint64_t failure_total;
 	// valid responses that passed the filter
 	uint64_t filter_success;
 	// how many packets did we receive that were marked as being the first
 	// fragment in a stream
 	uint32_t ip_fragments;
 	// metrics about _only_ validate_packet
-	uint32_t validation_passed;
-	uint32_t validation_failed;
+	uint64_t validation_passed;
+	uint64_t validation_failed;
 
 	int complete;  // has the scanner finished sending?
 	double start;  // timestamp of when recv started
 	double finish; // timestamp of when recv terminated
 
 	// number of packets captured by pcap filter
-	uint32_t pcap_recv;
+	uint64_t pcap_recv;
 	// number of packets dropped because there was no room in
 	// the operating system's buffer when they arrived, because
 	// packets weren't being read fast enough
-	uint32_t pcap_drop;
+	uint64_t pcap_drop;
 	// number of packets dropped by the network interface or its driver.
-	uint32_t pcap_ifdrop;
+	uint64_t pcap_ifdrop;
 };
 extern struct state_recv zrecv;
+
+struct port_conf {
+	uint port_count;
+	uint16_t ports[0xFFFF + 1];
+	uint8_t *port_bitmap;
+};
 
 #endif // _STATE_H

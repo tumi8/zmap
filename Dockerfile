@@ -14,7 +14,7 @@
 #     docker run -it --rm --net=host ghcr.io/zmap/zmap <zmap args>
 ####
 
-FROM ubuntu:20.04 as builder
+FROM ubuntu:24.04 as builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
@@ -29,6 +29,7 @@ RUN apt-get update \
     flex \
     byacc \
     libjson-c-dev \
+    libjudy-dev \
     pkg-config \
     libunistring-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -43,15 +44,15 @@ RUN cd /usr/local/src \
     && cmake --build . --parallel "$(nproc)" \
     && cmake --install . --prefix "/opt/zmap"
 
-FROM ubuntu:20.04
+FROM ubuntu:24.04
 
 LABEL org.opencontainers.image.source="https://github.com/tumi8/zmap"
 
 RUN apt-get update \
     && apt-get install -y \
     libpcap0.8 \
-    libjson-c4 \
-    libhiredis0.14 \
+    libjson-c5 \
+    libjudydebian1 \
     libgmp10 \
     dumb-init \
     && rm -rf /var/lib/apt/lists/*

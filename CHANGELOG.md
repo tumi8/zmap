@@ -119,3 +119,143 @@
 * CMakeLists.txt is now much more sane and packager-friendly
 * Switch CHANGELOG and INSTALL to Markdown
 * Generate `*.ggo` files from `*.ggo.in` files that define ZMap version as a macro
+
+# 3.0.0 2023-06-23
+We're happy to provide ZMap 3.0.0, only slightly under six years late. We recommend using this release over any previous 2.x release.
+
+ZMap 3.0.0 represents several years of development and contains more than a hundred small bug fixes from ZMap 2.1.1., including many fixes for UDP modules, sharding, and progress calculation. Below, are some of the most important changes:
+
+## BUGFIX
+
+* Fix send rate calculations
+* Accept RST packets for SEQ+0 (per RFC)
+* Packets per second is packets per second now instead of IPs per second
+* MaxResults is now the number of packets that pass the output filter (#502)
+* Try all routing tables in Linux
+* Fix crash on invalid UDP packets
+* Fix failed initialize on single-question DNS probes
+* Fix inaccurate blocklist warning
+* Use monotonic OS clocks for monitoring and rate estimation
+* Fix bugs in UDP template arguments
+* Increase UDP PCAP snaplen to prevent packet truncation
+* Exit on failed sends
+* Fix incorrect time remaining calculations on sharded scans
+
+## FEATURE
+
+* Added --list-of-ips feature which allows scanning a large number (e.g., hundreds of millions or billons) of individual IPS
+* Improved user messages when network settings can't be automatically discovered
+* Consistent ICMP support and handling across all probe modules (#470)
+* Set TCP MSS flags to avoid filtering by destination hosts (#673)
+* Sane default behavior that can be explained with other CLI flags
+* Non-Flat Result output and JSON result encoding
+* IP Fragment Checking
+* DNS, TCP SYN-ACK, and Bacnet Probe Module
+* Change Whitelist/Blacklist terms to Allowlist/Blocklist
+* Add extended validation bytes for probe modules that can use greater entropy
+* Support non-continuous source IP's (#516)
+* Add NetBSD and DragonFly BSD compatibility code (#411)
+* Improved ICMP validation based on returned packet (#419)
+
+## REMOVED
+
+* Drop Redis and MongoDB support (#661)
+
+
+# 4.0.0 2023-11-06
+ZMap 4.0.0 introduces the notion of multi-port scanning, which has been a long requested feature. This is a breaking change since ZMap now operates on a metric of (ip,port) target instead of simply IP (e.g., for scan rate). It also introduces new dependencies (e.g., libjudy) to support multi-port scanning and changes ZMap's command-line interface. Below are some of the most important changes:
+
+## BUGFIX
+
+* Fix segmentation fault when passing no port to the ICMP module (or any module without a port requirement)
+
+## FEATURE
+
+* Multi-port scanning support
+* Store link-layer timestamp in icmp_echo_time module (#726)
+* Build support for ARM-based Macs
+* Use the network interface containing the default route for usability
+* Improve the dst port validation
+
+
+# 4.1.0 2024-03-21
+ZMap 4.1.0 contains a number of bug fixes and performance enhancements, especially around the sending of probe packets. Additionally, the `IP_ID` is now randomized to prevent the fingerprinting of ZMap scan traffic. Below are some of the most important changes:
+
+## BUGFIX
+
+* Fixes a bug where an assertion error would always occur when the `-I` flag was used
+* Fixes `--probe-args` parsing with the DNS module
+* Prevents crash when `--batch` size overflowed the uint8 holding the batch_size
+* Fixes size calculation with `--iplayer` option that caused an overflow in `fake_eth_hdr`
+* Fixes shard initialization with multi-port that could cause the scan to scan port 0 
+* Fixes inaccurate estimated time remaining and percentage complete calculations during a multi-port scan
+* Fixes building from source on MidnightBSD
+* Fixes hit-rate calculation with multiple `--probes` packets per target
+
+
+## FEATURE
+
+* Randomizes the IP packet ID to prevent fingerprinting of scan traffic
+* Adds support for Netmap to increase performance on supported NIC's w/ the requisite drivers
+* Adds send packet batching (using `sendmmsg`) to improve performance on Linux/BSD
+* Adds hardware acceleration for AES to improve performance when the CPU begins to become the bottleneck
+* Adds integration tests and compilation checks for supported OS's as Github Actions
+* Adds --probe-args options to the TCP SYN scan module to send TCP header options identical to Ubuntu (default), MacOS, Windows, or No Options.
+* Sets default number of sending threads to min(4, number of host cores)
+* Handles IPv6 addresses in `blocklist.conf`
+* Supports `--iplayer` on MacOS
+
+
+# 4.1.1 2024-05-21
+
+## DOCUMENTATION
+* updated CHANGELOG.md and README.md to contain the changes from v4.1.0 and point to the latest version.
+
+## ENHANCEMENT
+
+* Use same IP TTL as ubuntu (#850)
+* Add TCP options parsing in receive thread (#858)
+
+## BUGFIX
+
+* Fixed a bug which caused inaccurate ETA every 44 secs.
+* Fixed a bug where a malformed TCP options returned to the scanner would cause the receive thread to hang.
+
+
+# 4.2.0 2024-07-09
+
+## BUGFIX
+
+* Fixed a bug where ZMap's behavior with a --max-targets of a percentage with multiple ports was inconsistent with our documentation/expectations. (#886)
+
+## ENHANCEMENT
+
+* Bump the base Docker image from Ubuntu 20.04 to 24.04 (#888)
+
+
+# 4.3.0 2024-11-27
+
+## FEATURE
+* New UDP probe for DTLS servers by @dlenskiSB in https://github.com/zmap/zmap/pull/890
+* New UDP probes by @annalittle in https://github.com/zmap/zmap/pull/899
+* Add source port validation CLI option and associated code to UDP module by @phillip-stephens in https://github.com/zmap/zmap/pull/901
+
+## BUGFIX
+
+* Fix 904 - multi-port scans lead to int overflow by @phillip-stephens in https://github.com/zmap/zmap/pull/905
+* Fix ZMap not obeying `--rate` edge case by @phillip-stephens in https://github.com/zmap/zmap/pull/907
+* Match JSON function to variable type by @phillip-stephens in https://github.com/zmap/zmap/pull/908
+* Fix source port range size warning by @Murgeye in https://github.com/zmap/zmap/pull/891
+
+## ENHANCEMENT
+* Handle upgrade path for blacklist to blocklist by @phillip-stephens in https://github.com/zmap/zmap/pull/895
+* Fixes ubuntu docker base image versions in github tests by @phillip-stephens in https://github.com/zmap/zmap/pull/898
+* Fix Mac build CI step by @phillip-stephens in https://github.com/zmap/zmap/pull/906
+
+
+# 4.3.1 2024-12-10
+
+## BUGFIX
+
+* Missed an uint32 which caused multi-port scans to end early by @phillip-stephens in https://github.com/zmap/zmap/pull/914
+* Fix for #913 (where a handful of targets were scanned twice) and added IPv4 scan coverage integration test and python wrapper with --fast-dryrun by @phillip-stephens in https://github.com/zmap/zmap/pull/916

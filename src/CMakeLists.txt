@@ -29,6 +29,7 @@ set(PROBE_MODULE_SOURCES
     probe_modules/module_tcp_synackscan.c
 	#probe_modules/module_tcp_cisco_backdoor.c
     probe_modules/module_udp.c
+    probe_modules/module_ipip.c
     probe_modules/packet.c
     probe_modules/probe_modules.c
     probe_modules/module_ntp.c
@@ -54,6 +55,7 @@ set(SOURCES
     iterator.c
     ipv6_target_file.c
     monitor.c
+    ports.c
     recv.c
     send.c
     shard.c
@@ -83,12 +85,14 @@ set(ZTESTSOURCES
     iterator.c
     ipv6_target_file.c
     monitor.c
+    ports.c
     recv.c
     send.c
     shard.c
     socket.c
     state.c
     summary.c
+    utility.c
     validate.c
     ztopt_compat.c
     ${PROBE_MODULE_SOURCES}
@@ -111,6 +115,7 @@ set(ZITSOURCES
     aesrand.c
     cyclic.c
     iterator.c
+	ports.c
     shard.c
     state.c
     validate.c
@@ -129,18 +134,31 @@ set(ZTEESOURCES
 if(WITH_PFRING)
     set(SOURCES ${SOURCES} socket-pfring.c)
     set(ZTESTSOURCES ${ZTESTSOURCES} socket-pfring.c)
+elseif(WITH_NETMAP)
+    set(SOURCES ${SOURCES} socket-netmap.c send-netmap.c)
+    set(ZTESTSOURCES ${ZTESTSOURCES} socket-netmap.c send-netmap.c)
+    if(APPLE OR BSD)
+        set(SOURCES ${SOURCES} if-netmap-bsd.c)
+        set(ZTESTSOURCES ${ZTESTSOURCES} if-netmap-bsd.c)
+    else()
+        set(SOURCES ${SOURCES} if-netmap-linux.c)
+        set(ZTESTSOURCES ${ZTESTSOURCES} if-netmap-linux.c)
+    endif()
 elseif (APPLE OR BSD)
-    set(SOURCES ${SOURCES} socket-bsd.c)
-    set(ZTESTSOURCES ${ZTESTSOURCES} socket-bsd.c)
+    set(SOURCES ${SOURCES} socket-bsd.c send-bsd.c)
+    set(ZTESTSOURCES ${ZTESTSOURCES} socket-bsd.c send-bsd.c)
 else()
-    set(SOURCES ${SOURCES} socket-linux.c)
-    set(ZTESTSOURCES ${ZTESTSOURCES} socket-linux.c)
+    set(SOURCES ${SOURCES} socket-linux.c send-linux.c)
+    set(ZTESTSOURCES ${ZTESTSOURCES} socket-linux.c send-linux.c)
 endif()
 
 # Handle various versions of recv
 if(WITH_PFRING)
     set(SOURCES ${SOURCES} recv-pfring.c)
     set(ZTESTSOURCES ${ZTESTSOURCES} recv-pfring.c)
+elseif(WITH_NETMAP)
+    set(SOURCES ${SOURCES} recv-netmap.c)
+    set(ZTESTSOURCES ${ZTESTSOURCES} recv-netmap.c)
 else()
     set(SOURCES ${SOURCES} recv-pcap.c)
     set(ZTESTSOURCES ${ZTESTSOURCES} recv-pcap.c)
@@ -218,9 +236,9 @@ add_executable(ztee ${ZTEESOURCES})
 add_executable(ztests ${ZTESTSOURCES})
 
 if(APPLE OR BSD)
-    set(DNET_LIBRARIES "dnet")
 else()
-    set(DNET_LIBRARIES "")
+    set(ZTESTSOURCES ${ZTESTSOURCES} send-linux.c)
+    set(SOURCES ${SOURCES} send-linux.c)
 endif()
 
 target_link_libraries(
@@ -228,8 +246,8 @@ target_link_libraries(
     zmaplib
     ${PFRING_LIBRARIES}
     pcap gmp m unistring
-    ${DNET_LIBRARIES}
     ${JSON_LIBRARIES}
+	${JUDY_LIBRARIES}
 )
 
 target_link_libraries(
@@ -256,8 +274,8 @@ target_link_libraries(
     zmaplib
     ${PFRING_LIBRARIES}
     pcap gmp m unistring
-    ${DNET_LIBRARIES}
     ${JSON_LIBRARIES}
+	${JUDY_LIBRARIES}
 )
 
 # Install binary

@@ -8,12 +8,13 @@
 
 /* send module for performing arbitrary UDP scans */
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
-#include <unistd.h>
 #include <string.h>
 #include <assert.h>
+#include <sys/time.h>
 
 #include <errno.h>
 
@@ -70,6 +71,8 @@ const unsigned char charset_all[257] = {
     0xfd, 0xfe, 0xff, 0x00};
 
 static int num_ports;
+#define SOURCE_PORT_VALIDATION_MODULE_DEFAULT false; // default to NOT validating source port
+static bool should_validate_src_port = SOURCE_PORT_VALIDATION_MODULE_DEFAULT
 
 probe_module_t module_udp;
 
@@ -123,8 +126,19 @@ static udp_payload_field_type_def_t udp_payload_template_fields[] = {
     {.name = "RAND_ALPHANUM",
      .ftype = UDP_RAND_ALPHANUM,
      .max_length = 0,
-     .desc = "Random mixed-case letters (a-z) and numbers"}};
-
+     .desc = "Random mixed-case letters (a-z) and numbers"},
+    {.name = "HEX",
+     .ftype = UDP_HEX,
+     .max_length = 0,
+     .desc = "String of hex-encoded byte values"},
+    {.name = "UNIXTIME_SEC",
+     .ftype = UDP_UNIXTIME_SEC,
+     .max_length = 4,
+     .desc = "Time in seconds since the Unix epoch in network byte order"},
+    {.name = "UNIXTIME_USEC",
+     .ftype = UDP_UNIXTIME_USEC,
+     .max_length = 4,
+     .desc = "Microsecond part of Unix time in network byte order"}};
 
 void udp_set_num_ports(int x) { num_ports = x; }
 
@@ -132,6 +146,12 @@ int udp_global_initialize(struct state_conf *conf)
 {
 	uint32_t udp_template_max_len = 0;
 	num_ports = conf->source_port_last - conf->source_port_first + 1;
+	should_validate_src_port = SOURCE_PORT_VALIDATION_MODULE_DEFAULT
+	if (conf->validate_source_port_override == VALIDATE_SRC_PORT_ENABLE_OVERRIDE) {
+		log_debug("udp", "enabling source port validation");
+		should_validate_src_port = true;
+	}
+
 
 	if (!conf->probe_args) {
 		log_error(
@@ -164,7 +184,7 @@ int udp_global_initialize(struct state_conf *conf)
 	size_t arg_name_len = c - args;
 	c++;
 	if (strncmp(args, "text", arg_name_len) == 0) {
-		udp_fixed_payload = (uint8_t*) strdup(c);
+		udp_fixed_payload = (uint8_t *)strdup(c);
 		udp_fixed_payload_len = strlen(c);
 	} else if (strncmp(args, "file", arg_name_len) == 0) {
 		udp_fixed_payload = xmalloc(MAX_UDP_PAYLOAD_LEN);
@@ -186,7 +206,8 @@ int udp_global_initialize(struct state_conf *conf)
 		size_t in_len = fread(in, 1, MAX_UDP_PAYLOAD_LEN, f);
 		fclose(f);
 
-		udp_template = udp_template_load(in, in_len, &udp_template_max_len);
+		udp_template =
+		    udp_template_load(in, in_len, &udp_template_max_len);
 		module_udp.make_packet = udp_make_templated_packet;
 	} else if (strncmp(args, "hex", arg_name_len) == 0) {
 		udp_fixed_payload_len = strlen(c) / 2;
@@ -241,27 +262,8 @@ int udp_global_cleanup(UNUSED struct state_conf *zconf,
 	return EXIT_SUCCESS;
 }
 
-int udp_init_perthread(void *buf, macaddr_t *src, macaddr_t *gw,
-		       UNUSED port_h_t dst_port,
-		       void **arg_ptr)
+int udp_init_perthread(void **arg_ptr)
 {
-	memset(buf, 0, MAX_PACKET_SIZE);
-	struct ether_header *eth_header = (struct ether_header *)buf;
-	make_eth_header(eth_header, src, gw);
-	struct ip *ip_header = (struct ip *)(&eth_header[1]);
-	uint16_t ip_len =
-	    htons(sizeof(struct ip) + sizeof(struct udphdr) + udp_fixed_payload_len);
-	make_ip_header(ip_header, IPPROTO_UDP, ip_len);
-
-	struct udphdr *udp_header = (struct udphdr *)(&ip_header[1]);
-	uint16_t udp_len = sizeof(struct udphdr) + udp_fixed_payload_len;
-	make_udp_header(udp_header, zconf.target_port, udp_len);
-
-	if (udp_fixed_payload) {
-		void *payload = &udp_header[1];
-		memcpy(payload, udp_fixed_payload, udp_fixed_payload_len);
-	}
-
 	// Seed our random number generator with the global generator
 	uint32_t seed = aesrand_getword(zconf.aes);
 	aesrand_t *aes = aesrand_init_from_seed(seed);
@@ -270,9 +272,32 @@ int udp_init_perthread(void *buf, macaddr_t *src, macaddr_t *gw,
 	return EXIT_SUCCESS;
 }
 
+int udp_prepare_packet(void *buf, macaddr_t *src, macaddr_t *gw, UNUSED void *arg_ptr)
+{
+	memset(buf, 0, MAX_PACKET_SIZE);
+	struct ether_header *eth_header = (struct ether_header *)buf;
+	make_eth_header(eth_header, src, gw);
+	struct ip *ip_header = (struct ip *)(&eth_header[1]);
+	uint16_t ip_len = htons(sizeof(struct ip) + sizeof(struct udphdr) +
+				udp_fixed_payload_len);
+	make_ip_header(ip_header, IPPROTO_UDP, ip_len);
+
+	struct udphdr *udp_header = (struct udphdr *)(&ip_header[1]);
+	uint16_t udp_len = sizeof(struct udphdr) + udp_fixed_payload_len;
+	make_udp_header(udp_header, udp_len);
+
+	if (udp_fixed_payload) {
+		void *payload = &udp_header[1];
+		memcpy(payload, udp_fixed_payload, udp_fixed_payload_len);
+	}
+
+	return EXIT_SUCCESS;
+}
+
 int udp_make_packet(void *buf, size_t *buf_len, ipaddr_n_t src_ip,
-		    ipaddr_n_t dst_ip, uint8_t ttl, uint32_t *validation,
-		    int probe_num, UNUSED void *arg)
+		    ipaddr_n_t dst_ip, port_n_t dport, uint8_t ttl,
+		    uint32_t *validation, int probe_num, uint16_t ip_id,
+		    UNUSED void *arg)
 {
 	struct ether_header *eth_header = (struct ether_header *)buf;
 	struct ip *ip_header = (struct ip *)(&eth_header[1]);
@@ -285,7 +310,9 @@ int udp_make_packet(void *buf, size_t *buf_len, ipaddr_n_t src_ip,
 	ip_header->ip_ttl = ttl;
 	udp_header->uh_sport =
 	    htons(get_src_port(num_ports, probe_num, validation));
+	udp_header->uh_dport = dport;
 
+	ip_header->ip_id = ip_id;
 	ip_header->ip_sum = 0;
 	ip_header->ip_sum = zmap_ip_checksum((unsigned short *)ip_header);
 
@@ -295,8 +322,9 @@ int udp_make_packet(void *buf, size_t *buf_len, ipaddr_n_t src_ip,
 }
 
 int udp_make_templated_packet(void *buf, size_t *buf_len, ipaddr_n_t src_ip,
-			      ipaddr_n_t dst_ip, uint8_t ttl,
-			      uint32_t *validation, int probe_num, void *arg)
+			      ipaddr_n_t dst_ip, port_n_t dport, uint8_t ttl,
+			      uint32_t *validation, int probe_num, uint16_t ip_id,
+			      void *arg)
 {
 	struct ether_header *eth_header = (struct ether_header *)buf;
 	struct ip *ip_header = (struct ip *)(&eth_header[1]);
@@ -309,6 +337,7 @@ int udp_make_templated_packet(void *buf, size_t *buf_len, ipaddr_n_t src_ip,
 	ip_header->ip_ttl = ttl;
 	udp_header->uh_sport =
 	    htons(get_src_port(num_ports, probe_num, validation));
+	udp_header->uh_dport = dport;
 
 	char *payload = (char *)&udp_header[1];
 	memset(payload, 0, MAX_UDP_PAYLOAD_LEN);
@@ -334,6 +363,7 @@ int udp_make_templated_packet(void *buf, size_t *buf_len, ipaddr_n_t src_ip,
 	udp_header->uh_ulen = ntohs(sizeof(struct udphdr) + payload_len);
 
 	ip_header->ip_sum = 0;
+	ip_header->ip_id = ip_id;
 	ip_header->ip_sum = zmap_ip_checksum((unsigned short *)ip_header);
 
 	// Recalculate the total length of the packet
@@ -355,8 +385,7 @@ void udp_print_packet(FILE *fp, void *packet)
 }
 
 void udp_process_packet(const u_char *packet, UNUSED uint32_t len,
-			fieldset_t *fs,
-			UNUSED uint32_t *validation,
+			fieldset_t *fs, UNUSED uint32_t *validation,
 			UNUSED struct timespec ts)
 {
 	struct ip *ip_hdr = (struct ip *)&packet[sizeof(struct ether_header)];
@@ -412,10 +441,10 @@ void udp_process_packet(const u_char *packet, UNUSED uint32_t len,
 }
 
 int udp_validate_packet(const struct ip *ip_hdr, uint32_t len, uint32_t *src_ip,
-			uint32_t *validation)
+			uint32_t *validation, const struct port_conf *ports)
 {
 	return udp_do_validate_packet(ip_hdr, len, src_ip, validation,
-				      num_ports, NO_SRC_PORT_VALIDATION);
+				      num_ports, should_validate_src_port, ports);
 }
 
 // Do very basic validation that this is an ICMP response to a packet we sent
@@ -425,7 +454,8 @@ int udp_validate_packet(const struct ip *ip_hdr, uint32_t len, uint32_t *src_ip,
 
 int udp_do_validate_packet(const struct ip *ip_hdr, uint32_t len,
 			   uint32_t *src_ip, uint32_t *validation,
-			   int num_ports, int expected_port)
+			   int num_ports, int validate_port,
+			   const struct port_conf *ports)
 {
 	if (ip_hdr->ip_p == IPPROTO_UDP) {
 		struct udphdr *udp = get_udp_header(ip_hdr, len);
@@ -439,10 +469,9 @@ int udp_do_validate_packet(const struct ip *ip_hdr, uint32_t len,
 		if (!blocklist_is_allowed(*src_ip)) {
 			return PACKET_INVALID;
 		}
-		if (expected_port != NO_SRC_PORT_VALIDATION) {
-			uint16_t ep = (uint16_t)expected_port;
+		if (validate_port == SRC_PORT_VALIDATION) {
 			uint16_t sport = ntohs(udp->uh_sport);
-			if (sport != ep) {
+			if (!check_src_port(sport, ports)) {
 				return PACKET_INVALID;
 			}
 		}
@@ -460,7 +489,7 @@ int udp_do_validate_packet(const struct ip *ip_hdr, uint32_t len,
 		// responding on a different port
 		uint16_t dport = ntohs(udp->uh_dport);
 		uint16_t sport = ntohs(udp->uh_sport);
-		if (dport != zconf.target_port) {
+		if (!check_src_port(dport, ports)) {
 			return PACKET_INVALID;
 		}
 		if (!check_dst_port(sport, num_ports, validation)) {
@@ -473,7 +502,9 @@ int udp_do_validate_packet(const struct ip *ip_hdr, uint32_t len,
 }
 
 int ipv6_udp_validate_packet(const struct ip6_hdr *ipv6_hdr, uint32_t len,
-		__attribute__((unused))uint32_t *src_ip, uint32_t *validation)
+		__attribute__((unused))uint32_t *src_ip, uint32_t *validation,
+		int num_ports, int validate_port, 
+		const struct port_conf *ports)
 {
 	uint16_t dport, sport;
 	struct udphdr *udp;
@@ -481,7 +512,7 @@ int ipv6_udp_validate_packet(const struct ip6_hdr *ipv6_hdr, uint32_t len,
 	if (ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt == IPPROTO_UDP) {
 		if (ntohs(ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_plen) > len) {
 			// buffer not large enough to contain expected UDP header, i.e. IPv6 payload
-			return 0;
+			return PACKET_INVALID;
 		}
 		udp = (struct udphdr *) &ipv6_hdr[1];
 		sport = ntohs(udp->uh_dport);
@@ -494,7 +525,7 @@ int ipv6_udp_validate_packet(const struct ip6_hdr *ipv6_hdr, uint32_t len,
 			+ sizeof(struct ip6_hdr) + sizeof(struct udphdr);
 		if (len < min_len) {
 			// Not enough information for us to validate
-			return 0;
+			return PACKET_INVALID;
 		}
 
 		struct icmp6_hdr *icmp6_h = (struct icmp6_hdr *) (&ipv6_hdr[1]);
@@ -509,22 +540,22 @@ int ipv6_udp_validate_packet(const struct ip6_hdr *ipv6_hdr, uint32_t len,
 			sport = ntohs(udp->uh_sport);
 			dport = ntohs(udp->uh_dport);
 		} else {
-			return 0;
+			return PACKET_INVALID;
 		}
 
 	} else {
-		return 0;
+		return PACKET_INVALID;
 	}
 
-	if (dport != zconf.target_port) {
-		return 0;
+	if (!check_src_port(dport, ports)) {
+		return PACKET_INVALID;
 	}
 
 	if (!check_dst_port(sport, num_ports, validation)) {
-		return 0;
+		return PACKET_INVALID;
 	}
 
-	return 1;
+	return PACKET_VALID;
 }
 
 // Add a new field to the template
@@ -585,6 +616,8 @@ int udp_template_build(udp_payload_template_t *t, char *out, unsigned int len,
 	unsigned int x, y;
 	uint32_t *u32;
 	uint16_t *u16;
+	int32_t *i32;
+	struct timeval tv = (struct timeval){0};
 
 	max = out + len;
 	p = out;
@@ -602,6 +635,7 @@ int udp_template_build(udp_payload_template_t *t, char *out, unsigned int len,
 			// These fields have a specified output length value
 
 		case UDP_DATA:
+		case UDP_HEX:
 			if (!(c->data && c->length))
 				break;
 			memcpy(p, c->data, c->length);
@@ -694,7 +728,7 @@ int udp_template_build(udp_payload_template_t *t, char *out, unsigned int len,
 				break;
 			}
 			u16 = (uint16_t *)p;
-			*u16 = udp_hdr->uh_sport;
+			*u16 = udp_hdr->uh_dport;
 			p += 2;
 			break;
 
@@ -713,11 +747,32 @@ int udp_template_build(udp_payload_template_t *t, char *out, unsigned int len,
 				full = 1;
 				break;
 			}
-			y = snprintf(tmp, 6, "%d", ntohs(udp_hdr->uh_sport));
+			y = snprintf(tmp, 6, "%d", ntohs(udp_hdr->uh_dport));
 			memcpy(p, tmp, y);
 			p += y;
 			break;
+
+		case UDP_UNIXTIME_SEC:
+		case UDP_UNIXTIME_USEC:
+			if (p + 4 >= max) {
+				full = 1;
+				break;
+			}
+
+			if (tv.tv_sec == 0) {
+				gettimeofday(&tv, NULL);
+			}
+
+			i32 = (int32_t *)p;
+			if (c->ftype == UDP_UNIXTIME_SEC) {
+				*i32 = htonl(tv.tv_sec);
+			} else {
+				*i32 = htonl(tv.tv_usec);
+			}
+			p += 4;
+			break;
 		}
+
 
 		// Bail out if our packet buffer would overflow
 		if (full == 1) {
@@ -733,7 +788,7 @@ int udp_template_build(udp_payload_template_t *t, char *out, unsigned int len,
 int udp_template_field_lookup(const char *vname, udp_payload_field_t *c)
 {
 	static const size_t fcount = sizeof(udp_payload_template_fields) /
-			      sizeof(udp_payload_template_fields[0]);
+				     sizeof(udp_payload_template_fields[0]);
 	size_t vname_len = strlen(vname);
 	size_t type_name_len = vname_len;
 	const char *param = strstr(vname, "=");
@@ -742,33 +797,65 @@ int udp_template_field_lookup(const char *vname, udp_payload_field_t *c)
 		param++;
 	}
 
+	// Check for HEX= field which uses the parameter to encode hex values instead of the field length
+	if (strncmp(vname, "HEX", 3) == 0 && strlen("HEX") == type_name_len) {
+		c->ftype = UDP_HEX;
+		c->length = strlen(param) / 2;
+		c->data = xmalloc(c->length);
+
+        unsigned int n;
+        for (size_t i = 0; i < c->length; i++) {
+            if (sscanf(param + (i * 2), "%2x", &n) != 1) {
+                log_fatal("udp", "non-hex character: '%c'", param[i * 2]);
+            }
+			c->data[i] = (n & 0xff);
+        }
+
+		return 1;
+	}
+
 	// Most field types treat their parameter as a generator output length
 	// unless it is ignored (ADDR, PORT, etc).
 	long olen = 0;
 	if (param && !*param) {
-		log_fatal("udp", "invalid template: field spec %s is invalid (missing length)", vname);
+		log_fatal(
+		    "udp",
+		    "invalid template: field spec %s is invalid (missing length)",
+		    vname);
 	}
 	if (param) {
 		char *end = NULL;
 		errno = 0;
 		olen = strtol(param, &end, 10);
 		if (errno) {
-			log_fatal("udp", "invalid template: unable to read length from %s: %s", vname, strerror(errno));
+			log_fatal(
+			    "udp",
+			    "invalid template: unable to read length from %s: %s",
+			    vname, strerror(errno));
 		}
 		if (!end || end != vname + vname_len) {
-			log_fatal("udp", "invalid template: unable to read length from %s", vname);
+			log_fatal(
+			    "udp",
+			    "invalid template: unable to read length from %s",
+			    vname);
 		}
 		if (olen < 0 || olen > MAX_UDP_PAYLOAD_LEN) {
-			log_fatal("udp", "invalid template: field size %d is larger than the max (%d)", olen, MAX_UDP_PAYLOAD_LEN);
+			log_fatal(
+			    "udp",
+			    "invalid template: field size %d is larger than the max (%d)",
+			    olen, MAX_UDP_PAYLOAD_LEN);
 		}
 	}
 
 	// Find a field that matches the
 	for (unsigned int f = 0; f < fcount; f++) {
-		const udp_payload_field_type_def_t* ftype = &udp_payload_template_fields[f];
-		if (strncmp(vname, ftype->name, type_name_len) == 0 && strlen(ftype->name) == type_name_len) {
+		const udp_payload_field_type_def_t *ftype =
+		    &udp_payload_template_fields[f];
+		if (strncmp(vname, ftype->name, type_name_len) == 0 &&
+		    strlen(ftype->name) == type_name_len) {
 			c->ftype = ftype->ftype;
-			c->length = ftype->max_length ? ftype->max_length : (size_t) olen;
+			c->length = ftype->max_length ? ftype->max_length
+						      : (size_t)olen;
 			c->data = NULL;
 			return 1;
 		}
@@ -891,11 +978,14 @@ probe_module_t module_udp = {
     .name = "udp",
     .max_packet_length = 0, // set in init
     .pcap_filter = "udp || icmp",
-    .pcap_snaplen = 1500,
+    .pcap_snaplen =
+	MAX_UDP_PAYLOAD_LEN + 20 + 24, // Ether Header, IP Header with Options
     .port_args = 1,
-    .thread_initialize = &udp_init_perthread,
     .global_initialize = &udp_global_initialize,
-    .make_packet = &udp_make_packet, // can be overridden to udp_make_templated_packet by udp_global_initalize
+    .thread_initialize = &udp_init_perthread,
+    .prepare_packet = &udp_prepare_packet,
+    .make_packet =
+	&udp_make_packet, // can be overridden to udp_make_templated_packet by udp_global_initalize
     .print_packet = &udp_print_packet,
     .validate_packet = &udp_validate_packet,
     .process_packet = &udp_process_packet,
