@@ -235,9 +235,17 @@ int ipv6_udp_global_cleanup(__attribute__((unused)) struct state_conf *zconf,
 	return EXIT_SUCCESS;
 }
 
-int ipv6_udp_init_perthread(void* buf, macaddr_t *src,
-		macaddr_t *gw, __attribute__((unused)) port_h_t dst_port,\
-		void **arg_ptr)
+int ipv6_udp_init_perthread(void **arg_ptr)
+{
+	// Seed our random number generator with the global generator
+	uint32_t seed = aesrand_getword(zconf.aes);
+	aesrand_t *aes = aesrand_init_from_seed(seed);
+	*arg_ptr = aes;
+
+	return EXIT_SUCCESS;
+}
+
+int ipv6_udp_prepare_packet(void *buf, macaddr_t *src, macaddr_t *gw, UNUSED void *arg_ptr)
 {
 	memset(buf, 0, MAX_PACKET_SIZE);
 	struct ether_header *eth_header = (struct ether_header *) buf;
@@ -256,13 +264,6 @@ int ipv6_udp_init_perthread(void* buf, macaddr_t *src,
 	assert(module_ipv6_udp.max_packet_length <= MAX_PACKET_SIZE);
 
 	memcpy(payload, udp_send_msg, udp_send_msg_len);
-
-	// Seed our random number generator with the global generator
-	uint32_t seed = aesrand_getword(zconf.aes);
-	aesrand_t *aes = aesrand_init_from_seed(seed);
-	*arg_ptr = aes;
-
-	return EXIT_SUCCESS;
 }
 
 int ipv6_udp_make_packet(void *buf, size_t *buf_len, __attribute__((unused)) ipaddr_n_t src_ip,
@@ -775,6 +776,7 @@ probe_module_t module_ipv6_udp = {
 	.port_args = 1,
 	.thread_initialize = &ipv6_udp_init_perthread,
 	.global_initialize = &ipv6_udp_global_initialize,
+	.prepare_packet = &ipv6_udp_prepare_packet,
 	.make_packet = &ipv6_udp_make_packet,
 	.print_packet = &ipv6_udp_print_packet,
 	.validate_packet = &_ipv6_udp_validate_packet,
