@@ -266,7 +266,7 @@ int ipv6_udp_dns_prepare_packet(void *buf, macaddr_t *src, macaddr_t *gw, UNUSED
 }
 
 int ipv6_udp_dns_make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t src_ip, UNUSED ipaddr_n_t dst_ip, port_n_t dport,
-		uint8_t ttl, uint32_t *validation, int probe_num, uint16_t ip_id, void *arg) {
+		uint8_t ttl, uint32_t *validation, int probe_num, UNUSED uint16_t ip_id, void *arg) {
 	struct ether_header *eth_header = (struct ether_header *) buf;
 	struct ip6_hdr *ip6_header = (struct ip6_hdr*) (&eth_header[1]);
 	struct udphdr *udp_header= (struct udphdr *) &ip6_header[1];
@@ -324,8 +324,7 @@ int ipv6_udp_dns_validate_packet(const struct ip *ip_hdr, uint32_t len,
 	return 1;
 }
 
-void ipv6_udp_dns_process_packet(const u_char *packet, UNUSED uint32_t len, fieldset_t *fs,
-		__attribute__((unused)) uint32_t *validation) {
+void ipv6_udp_dns_process_packet(const u_char *packet, UNUSED uint32_t len, fieldset_t *fs, __attribute__((unused)) uint32_t *validation, UNUSED struct timespec ts) {
 	struct ip6_hdr *ipv6_hdr = (struct ip6_hdr *) &packet[sizeof(struct ether_header)];
 	if (ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt == IPPROTO_UDP) {
 		struct udphdr *udp_hdr = (struct udphdr *) (&ipv6_hdr[1]);

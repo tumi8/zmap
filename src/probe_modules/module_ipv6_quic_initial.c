@@ -9,7 +9,12 @@
  */
 
 /* module to perform IETF QUIC (draft-32) enumeration */
+// Needed for asprintf
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE 1
+#endif
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -43,9 +48,10 @@ static inline uint64_t ipv6_make_quic_conn_id(char a, char b, char c, char d, ch
 }
 
 static int num_ports;
+#define SOURCE_PORT_VALIDATION_MODULE_DEFAULT false; // default to NOT validating source port
+static bool should_validate_src_port = SOURCE_PORT_VALIDATION_MODULE_DEFAULT
 
 probe_module_t module_ipv6_quic_initial;
-static char filter_rule[30];
 uint64_t connection_id_v6;
 
 void ipv6_quic_initial_set_num_ports(int x) { num_ports = x; }
@@ -129,9 +135,9 @@ static int ipv6_quic_initial_prepare_packet(void *buf, macaddr_t *src, macaddr_t
 }
 
 int ipv6_quic_initial_make_packet(void *buf, size_t *buf_len,
-			     ipaddr_n_t src_ip, ipaddr_n_t dst_ip,  port_n_t dport,
+			     UNUSED ipaddr_n_t src_ip, UNUSED ipaddr_n_t dst_ip,  port_n_t dport,
 			     UNUSED uint8_t ttl, uint32_t *validation,
-			     int probe_num, uint16_t ip_id, void *arg)
+			     int probe_num, UNUSED uint16_t ip_id, void *arg)
 {
 	struct ether_header *eth_header = (struct ether_header *)buf;
 	struct ip6_hdr *ip6_header = (struct ip6_hdr *)(&eth_header[1]);
@@ -289,7 +295,8 @@ void ipv6_quic_initial_process_packet(const u_char *packet, UNUSED uint32_t len,
 
 int ipv6_quic_initial_validate_packet(const struct ip *ip_hdr, uint32_t len,
 				 __attribute__((unused)) uint32_t *src_ip,
-				 UNUSED uint32_t *validation)
+				 UNUSED uint32_t *validation,
+				 const struct port_conf *ports)
 {
     struct ip6_hdr *ipv6_hdr = (struct ip6_hdr *) ip_hdr;
 
@@ -306,6 +313,12 @@ int ipv6_quic_initial_validate_packet(const struct ip *ip_hdr, uint32_t len,
 	uint16_t sport = ntohs(udp->uh_dport);
 	if (!check_dst_port(sport, num_ports, validation)) {
 		return PACKET_INVALID;
+	}
+	if (should_validate_src_port == SRC_PORT_VALIDATION) {
+		uint16_t sport = ntohs(udp->uh_sport);
+		if (!check_src_port(sport, ports)) {
+			return PACKET_INVALID;
+		}
 	}
 	return PACKET_VALID;
 }

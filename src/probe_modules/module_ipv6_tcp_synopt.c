@@ -205,7 +205,8 @@ int ipv6_tcp_synopt_validate_packet(const struct ip *ip_hdr, uint32_t len,
 
 void ipv6_tcp_synopt_process_packet(const u_char *packet,
 		__attribute__((unused)) uint32_t len, fieldset_t *fs,
-		__attribute__((unused)) uint32_t *validation)
+		__attribute__((unused)) uint32_t *validation,
+		 __attribute__((unused)) struct timespec ts)
 {
 	struct ether_header *eth_hdr = (struct ether_header *) packet;
 	struct ip6_hdr *ipv6_hdr = (struct ip6_hdr *) (&eth_hdr[1]);

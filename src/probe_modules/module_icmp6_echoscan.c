@@ -61,7 +61,7 @@ static int icmp6_echo_prepare_packet(void *buf, macaddr_t *src, macaddr_t *gw,
 	return EXIT_SUCCESS;
 }
 
-static int icmp6_echo_make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t src_ip,  UNUSED ipaddr_n_t dst_ip, UNUSED port_n_t dst_port, uint8_t ttl, uint32_t *validation, UNUSED int probe_num, uint16_t ip_id, UNUSED void *arg)
+static int icmp6_echo_make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t src_ip,  UNUSED ipaddr_n_t dst_ip, UNUSED port_n_t dst_port, uint8_t ttl, uint32_t *validation, UNUSED int probe_num, UNUSED uint16_t ip_id, UNUSED void *arg)
 {
 	struct ether_header *eth_header = (struct ether_header *) buf;
 	struct ip6_hdr *ip6_header = (struct ip6_hdr *)(&eth_header[1]);
@@ -159,7 +159,8 @@ static int icmp6_validate_packet(const struct ip *ip_hdr,
 
 static void icmp6_echo_process_packet(const u_char *packet,
 		__attribute__((unused)) uint32_t len, fieldset_t *fs,
-		__attribute__((unused)) uint32_t *validation)
+		__attribute__((unused)) uint32_t *validation,
+		UNUSED const struct timespec ts)
 {
 	struct ip6_hdr *ip6_hdr = (struct ip6_hdr *) &packet[sizeof(struct ether_header)];
 	struct icmp6_hdr *icmp6_hdr = (struct icmp6_hdr *) (&ip6_hdr[1]);

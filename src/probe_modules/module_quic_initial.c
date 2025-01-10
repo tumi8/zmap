@@ -10,6 +10,7 @@
 
 /* module to perform IETF QUIC (draft-32) enumeration */
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -43,9 +44,10 @@ static inline uint64_t make_quic_conn_id(char a, char b, char c, char d, char e,
 }
 
 static int num_ports;
+#define SOURCE_PORT_VALIDATION_MODULE_DEFAULT false; // default to NOT validating source port
+static bool should_validate_src_port = SOURCE_PORT_VALIDATION_MODULE_DEFAULT
 
 probe_module_t module_quic_initial;
-static char filter_rule[30];
 uint64_t connection_id;
 
 void quic_initial_set_num_ports(int x) { num_ports = x; }
@@ -126,7 +128,7 @@ static int quic_initial_prepare_packet(void *buf, macaddr_t *src, macaddr_t *gw,
 int quic_initial_make_packet(void *buf, size_t *buf_len,
 			     ipaddr_n_t src_ip, ipaddr_n_t dst_ip, port_n_t dport,
 			     UNUSED uint8_t ttl, uint32_t *validation,
-			     int probe_num, uint16_t ip_id, UNUSED void *arg)
+			     int probe_num, UNUSED uint16_t ip_id, UNUSED void *arg)
 {
 	struct ether_header *eth_header = (struct ether_header *)buf;
 	struct ip *ip_header = (struct ip *)(&eth_header[1]);
@@ -283,7 +285,7 @@ void quic_initial_process_packet(const u_char *packet, UNUSED uint32_t len,
 
 int quic_initial_validate_packet(const struct ip *ip_hdr, uint32_t len,
 				 __attribute__((unused)) uint32_t *src_ip,
-				 UNUSED uint32_t *validation)
+				 UNUSED uint32_t *validation, const struct port_conf *ports)
 {
 	// We only want to process UDP datagrams
 	if (ip_hdr->ip_p != IPPROTO_UDP) {
@@ -298,6 +300,12 @@ int quic_initial_validate_packet(const struct ip *ip_hdr, uint32_t len,
 	uint16_t sport = ntohs(udp->uh_dport);
 	if (!check_dst_port(sport, num_ports, validation)) {
 		return PACKET_INVALID;
+	}
+	if (should_validate_src_port == SRC_PORT_VALIDATION) {
+		uint16_t sport = ntohs(udp->uh_sport);
+		if (!check_src_port(sport, ports)) {
+			return PACKET_INVALID;
+		}
 	}
 	if (!blocklist_is_allowed(*src_ip)) {
 		return PACKET_INVALID;
@@ -326,7 +334,7 @@ probe_module_t module_quic_initial = {
     .port_args = 1,
     .global_initialize = &quic_initial_global_initialize,
     .prepare_packet = &quic_initial_prepare_packet,
-	.make_packet = &quic_initial_make_packet,
+    .make_packet = &quic_initial_make_packet,
     .print_packet = &quic_initial_print_packet,
     .validate_packet = &quic_initial_validate_packet,
     .process_packet = &quic_initial_process_packet,
