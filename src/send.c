@@ -419,7 +419,6 @@ int send_run(sock_t st, shard_t *s)
 			    s->thread_id);
 			goto cleanup;
 		}
-		log_debug("send", "INIT");
 		for (int i = 0; i < zconf.packet_streams; i++) {
 			count++;
 			uint32_t src_ip = get_src_ip(current_ip, i);
@@ -432,7 +431,6 @@ int send_run(sock_t st, shard_t *s)
 				validate_gen_ipv6(&ipv6_src, &ipv6_dst,
 				 					htons(current_port),
 					 				(uint8_t *)validation);
-				log_debug("send", "I2");
 			} else {
 				validate_gen(src_ip, current_ip,
 				 			htons(current_port),
@@ -440,14 +438,12 @@ int send_run(sock_t st, shard_t *s)
 			}
 			uint8_t ttl = zconf.probe_ttl;
 			size_t length = 0;
-			log_debug("send", "%d",current_port);
 			zconf.probe_module->make_packet(
 			    batch->packets[batch->len].buf, &length,
 				src_ip, current_ip, htons(current_port), ttl, validation, i,
 				// Grab last 2 bytes of validation for ip_id
 			    (uint16_t)(validation[size_of_validation - 1] & 0xFFFF),
 			    probe_data);
-			log_debug("send", "packet_done");
 			if (length > MAX_PACKET_SIZE) {
 				log_fatal(
 				    "send",
@@ -456,7 +452,6 @@ int send_run(sock_t st, shard_t *s)
 				    MAX_PACKET_SIZE);
 			}
 			batch->packets[batch->len].len = (uint32_t)length;
-			log_debug("send", "I25");
 			if (zconf.dryrun) {
 				batch->len++;
 				if (batch->len == batch->capacity) {
@@ -493,7 +488,6 @@ int send_run(sock_t st, shard_t *s)
 		s->state.targets_scanned++;
 
 		// IPv6
-		log_debug("send", "I3");
 		if (ipv6) {
 			int ret = ipv6_target_file_get_ipv6(&ipv6_dst);
 			if (ret != 0) {
