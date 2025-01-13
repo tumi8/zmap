@@ -60,12 +60,12 @@ void handle_packet(uint32_t buflen, const u_char *bytes,
 		// extract port if TCP or UDP packet to both generate validation data and to
 		// check if the response is a duplicate
 		if (&ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt == IPPROTO_TCP) {
-			struct tcphdr *tcp = get_tcp_header(&ipv6_hdr, len_ip_and_payload);
+			struct tcphdr *tcp = get_tcp_header_ipv6(ipv6_hdr, len_ip_and_payload);
 			if (tcp) {
 				src_port = tcp->th_sport;
 			}
 		} else if (&ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt == IPPROTO_UDP) {
-			struct udphdr *udp = get_udp_header(&ipv6_hdr, len_ip_and_payload);
+			struct udphdr *udp = get_udp_header_ipv6(ipv6_hdr, len_ip_and_payload);
 			if (udp) {
 				src_port = udp->uh_sport;
 			}

@@ -226,6 +226,17 @@ static inline struct ip *get_ip_header(const u_char *packet, uint32_t len)
 	return (struct ip *)&packet[sizeof(struct ether_header)];
 }
 
+static inline struct tcphdr *get_tcp_header_ipv6(struct ip6_hdr *ipv6_hdr,
+					    uint32_t len)
+{
+
+	if ((ntohs(ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_plen)) > len) {
+		// buffer not large enough to contain expected tcp header, i.e. IPv6 payload
+		return 0;
+	}
+	return (struct tcphdr*) (&ipv6_hdr[1]);
+}
+
 static inline struct tcphdr *get_tcp_header(const struct ip *ip_hdr,
 					    uint32_t len)
 {
@@ -234,6 +245,16 @@ static inline struct tcphdr *get_tcp_header(const struct ip *ip_hdr,
 		return NULL;
 	}
 	return (struct tcphdr *)((char *)ip_hdr + 4 * ip_hdr->ip_hl);
+}
+
+static inline struct udphdr *get_udp_header_ipv6(const struct ip6_hdr *ipv6_hdr,
+					    uint32_t len)
+{
+	if (ntohs(ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_plen) > len) {
+		// buffer not large enough to contain expected UDP header, i.e. IPv6 payload
+		return PACKET_INVALID;
+	}
+	return (struct udphdr *) &ipv6_hdr[1];
 }
 
 static inline struct udphdr *get_udp_header(const struct ip *ip_hdr,
