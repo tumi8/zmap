@@ -146,17 +146,22 @@ static void network_config_init(void)
 	}
 	if (zconf.number_source_ips == 0) {
 		struct in_addr default_ip;
-		if (get_iface_ip(zconf.iface, &default_ip) < 0) {
-			log_fatal("zmap",
-				  "could not detect default IP address for %s."
-				  " Try specifying a source address (-S).",
-				  zconf.iface);
+		if (zconf.ipv6_source_ip) {
+			inet_aton("0.0.0.0", &default_ip);
+			log_debug("zmap", "IPv6 mode, configuring placeholder IPv4 address.");
+		} else {
+			if (get_iface_ip(zconf.iface, &default_ip) < 0) {
+				log_fatal("zmap",
+					"could not detect default IP address for %s."
+					" Try specifying a source address (-S).",
+					zconf.iface);
+			}
 		}
 		zconf.source_ip_addresses[0] = default_ip.s_addr;
 		zconf.number_source_ips++;
 		log_debug(
 		    "zmap",
-		    "no source IP address given. will use default address: %s.",
+		    "no IPv4 source IP address given. will use default address: %s.",
 		    inet_ntoa(default_ip));
 	}
 	if (!zconf.gw_mac_set) {
