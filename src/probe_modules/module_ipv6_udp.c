@@ -38,7 +38,7 @@
 
 static char *udp_send_msg = NULL;
 static int udp_send_msg_len = 0;
-static int udp_send_substitutions = 0;
+//static int udp_send_substitutions = 0;
 static udp_payload_template_t *udp_template = NULL;
 
 static const char *udp_send_msg_default = "GET / HTTP/1.1\r\nHost: www\r\n\r\n";
@@ -169,9 +169,9 @@ int ipv6_udp_global_initialize(struct state_conf *conf) {
 	} else if (strcmp(args, "file") == 0 || strcmp(args, "template") == 0) {
 		inp = fopen(c, "rb");
 		if (!inp) {
-			free(args);
 			free(udp_send_msg);
 			log_fatal("udp", "could not open UDP data file '%s'\n", c);
+			free(args);
 			exit(1);
 		}
 		free(udp_send_msg);
@@ -194,9 +194,9 @@ int ipv6_udp_global_initialize(struct state_conf *conf) {
 
 		for (i=0; i < udp_send_msg_len; i++) {
 			if (sscanf(c + (i*2), "%2x", &n) != 1) {
-				free(args);
 				free(udp_send_msg);
 				log_fatal("udp", "non-hex character: '%c'", c[i*2]);
+				free(args);
 				exit(1);
 			}
 			udp_send_msg[i] = (n & 0xff);
@@ -264,10 +264,12 @@ int ipv6_udp_prepare_packet(void *buf, macaddr_t *src, macaddr_t *gw, UNUSED voi
 	assert(module_ipv6_udp.max_packet_length <= MAX_PACKET_SIZE);
 
 	memcpy(payload, udp_send_msg, udp_send_msg_len);
+
+	return EXIT_SUCCESS;
 }
 
-int ipv6_udp_make_packet(void *buf, size_t *buf_len, __attribute__((unused)) ipaddr_n_t src_ip,
-		__attribute__((unused)) ipaddr_n_t dst_ip, port_n_t dport, uint8_t ttl, uint32_t *validation, int probe_num, uint16_t ip_id, void *arg)
+int ipv6_udp_make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t src_ip,
+		UNUSED ipaddr_n_t dst_ip, port_n_t dport, uint8_t ttl, uint32_t *validation, int probe_num, UNUSED uint16_t ip_id, void *arg)
 {
 	// From module_ipv6_udp_dns
 	struct ether_header *eth_header = (struct ether_header *) buf;

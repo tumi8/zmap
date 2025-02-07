@@ -55,7 +55,7 @@ void validate_gen_ex(const uint32_t input0, const uint32_t input1,
 }
 
 void validate_gen_ipv6(const struct in6_addr *src, const struct in6_addr *dst,
-				const uint16_t dst_port, uint8_t output[VALIDATE_BYTES])
+				__attribute__((unused)) const uint16_t dst_port, uint8_t output[VALIDATE_BYTES])
 {
 	assert(aes128);
 

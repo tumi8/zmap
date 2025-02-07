@@ -454,7 +454,7 @@ int udp_validate_packet(const struct ip *ip_hdr, uint32_t len, uint32_t *src_ip,
 
 int udp_do_validate_packet(const struct ip *ip_hdr, uint32_t len,
 			   uint32_t *src_ip, uint32_t *validation,
-			   int num_ports, int validate_port,
+			   int num_ports, UNUSED int validate_port,
 			   const struct port_conf *ports)
 {
 	if (ip_hdr->ip_p == IPPROTO_UDP) {
@@ -502,8 +502,8 @@ int udp_do_validate_packet(const struct ip *ip_hdr, uint32_t len,
 }
 
 int ipv6_udp_validate_packet(const struct ip6_hdr *ipv6_hdr, uint32_t len,
-		__attribute__((unused))uint32_t *src_ip, uint32_t *validation,
-		int num_ports, int validate_port, 
+		UNUSED uint32_t *src_ip, uint32_t *validation,
+		int num_ports, UNUSED int validate_port, 
 		const struct port_conf *ports)
 {
 	uint16_t dport, sport;

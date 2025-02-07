@@ -41,7 +41,7 @@ void handle_packet(uint32_t buflen, const u_char *bytes,
 {
 	uint32_t src_ip;
 	struct ip *ip_hdr;
-	uint16_t src_port;
+	uint16_t src_port = 0;
 	uint32_t validation[VALIDATE_BYTES / sizeof(uint8_t)];
 	struct ip6_hdr *ipv6_hdr;
 
@@ -59,12 +59,12 @@ void handle_packet(uint32_t buflen, const u_char *bytes,
 
 		// extract port if TCP or UDP packet to both generate validation data and to
 		// check if the response is a duplicate
-		if (&ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt == IPPROTO_TCP) {
+		if (ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt == IPPROTO_TCP) {
 			struct tcphdr *tcp = get_tcp_header_ipv6(ipv6_hdr, len_ip_and_payload);
 			if (tcp) {
 				src_port = tcp->th_sport;
 			}
-		} else if (&ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt == IPPROTO_UDP) {
+		} else if (ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt == IPPROTO_UDP) {
 			struct udphdr *udp = get_udp_header_ipv6(ipv6_hdr, len_ip_and_payload);
 			if (udp) {
 				src_port = udp->uh_sport;
@@ -119,7 +119,7 @@ void handle_packet(uint32_t buflen, const u_char *bytes,
 		is_repeat = 0;
 	} else {
 		// woo! We've validated that the packet is a response to our scan
-		int is_repeat = 0;
+		is_repeat = 0;
 		if (zconf.dedup_method == DEDUP_METHOD_FULL) {
 			is_repeat = pbm_check(seen, ntohl(src_ip));
 		} else if (zconf.dedup_method == DEDUP_METHOD_WINDOW) {

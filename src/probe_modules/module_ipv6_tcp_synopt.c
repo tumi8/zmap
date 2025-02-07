@@ -123,8 +123,8 @@ static int ipv6_tcp_synopt_prepare_packet(void *buf, macaddr_t *src, macaddr_t *
 	return EXIT_SUCCESS;
 }
 
-int ipv6_tcp_synopt_make_packet(void *buf, size_t *buf_len, __attribute__((unused)) ipaddr_n_t src_ip, __attribute__((unused)) ipaddr_n_t dst_ip, port_n_t dport,
-        uint8_t ttl, uint32_t *validation, int probe_num, uint16_t ip_id, void *arg)
+int ipv6_tcp_synopt_make_packet(void *buf, size_t *buf_len, __attribute__((unused)) ipaddr_n_t src_ip, __attribute__((unused)) ipaddr_n_t dst_ip, port_n_t dport, 
+        uint8_t ttl, uint32_t *validation, int probe_num, UNUSED uint16_t ip_id, void *arg)
 {
 	struct ether_header *eth_header = (struct ether_header *) buf;
 	struct ip6_hdr *ip6_header = (struct ip6_hdr*) (&eth_header[1]);
