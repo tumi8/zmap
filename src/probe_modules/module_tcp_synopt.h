@@ -127,11 +127,11 @@ static inline void tcpsynopt_process_packet_parse(
 			i=i+2;
 			break;
 		case 6: // Echo Request
-			snprintf(&buft[j],5,"ECHO-"); j=j+5;
+			snprintf(&buft[j],6,"ECHO-"); j=j+5;
 			fs_modify_uint64(fs, "echo", (uint64_t)(ntohl(*(unsigned int*) &opts[i+2])));
 			i=i+6;
 		case 7: // Echo Reply
-			snprintf(&buft[j],6,"ECHOR-"); j=j+6;
+			snprintf(&buft[j],7,"ECHOR-"); j=j+6;
 			fs_modify_uint64(fs, "echoreply", (uint64_t)(ntohl(*(unsigned int*) &opts[i+2])));
 			i=i+6;
 		case 8: // timestamps
@@ -147,7 +147,7 @@ static inline void tcpsynopt_process_packet_parse(
 			}
 			break;
 		case 27: // Quick Start/ Response
-			snprintf(&buft[j],3,"QS-"); j=j+3;
+			snprintf(&buft[j],4,"QS-"); j=j+3;
 
 			fs_modify_uint64(fs, "qsfunc", (uint64_t)((*(unsigned char*) &opts[i+2]) >> 4));
 			fs_modify_uint64(fs, "qsttl", (uint64_t)(*(unsigned char*) &opts[i+3]));

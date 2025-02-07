@@ -89,9 +89,9 @@ int ipv6_tcp_synopt_global_initialize(struct state_conf *conf)
 
 		for (i=0; i < tcp_send_opts_len; i++) {
 			if (sscanf(c + (i*2), "%2x", &n) != 1) {
-				free(args);
 				free(tcp_send_opts);
 				log_fatal("udp", "non-hex character: '%c'", c[i*2]);
+				free(args);
 				exit(1);
 			}
 			tcp_send_opts[i] = (n & 0xff);
