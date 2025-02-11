@@ -175,7 +175,7 @@ int tcpsynopt_validate_packet(const struct ip *ip_hdr, uint32_t len,
 	}
 	// (4*5 =) 20 bytes IP header + 20 bytes tcp hdr + 36 bytes = 76 byte
 	// reply packet may not contain any tcp options!
-	if ((4*ip_hdr->ip_hl + ZMAP_TCP_SYNOPT_TCP_HEADER_LEN + 0) > len) {
+	if ((((uint32_t) 4)*ip_hdr->ip_hl + ZMAP_TCP_SYNOPT_TCP_HEADER_LEN + ((uint32_t) 0)) > len) {
 		// buffer not large enough to contain expected tcp header
 		printf("buffer (%u) not large enough!\n" ,len);
 		return 0;
