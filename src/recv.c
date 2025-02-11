@@ -43,7 +43,7 @@ void handle_packet(uint32_t buflen, const u_char *bytes,
 	struct ip *ip_hdr;
 	uint16_t src_port = 0;
 	uint32_t validation[VALIDATE_BYTES / sizeof(uint8_t)];
-	struct ip6_hdr *ipv6_hdr;
+	struct ip6_hdr *ipv6_hdr = NULL;
 
 	uint32_t len_ip_and_payload =
 	    buflen - (zconf.send_ip_pkts ? 0 : sizeof(struct ether_header));

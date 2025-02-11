@@ -303,8 +303,8 @@ int send_run(sock_t st, shard_t *s)
 	int attempts = zconf.retries + 1;
 	// Get the initial IP to scan.
 	target_t current;
-	uint32_t current_ip;
-	uint16_t current_port;
+	uint32_t current_ip = 0;
+	uint16_t current_port = 0;
 	struct in6_addr ipv6_dst;
 
 	if (ipv6) {
