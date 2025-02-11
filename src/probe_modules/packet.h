@@ -232,7 +232,7 @@ static inline struct tcphdr *get_tcp_header_ipv6(struct ip6_hdr *ipv6_hdr,
 
 	if ((ntohs(ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_plen)) > len) {
 		// buffer not large enough to contain expected tcp header, i.e. IPv6 payload
-		return 0;
+		return NULL;
 	}
 	return (struct tcphdr*) (&ipv6_hdr[1]);
 }
@@ -252,7 +252,7 @@ static inline struct udphdr *get_udp_header_ipv6(const struct ip6_hdr *ipv6_hdr,
 {
 	if (ntohs(ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_plen) > len) {
 		// buffer not large enough to contain expected UDP header, i.e. IPv6 payload
-		return PACKET_INVALID;
+		return NULL;
 	}
 	return (struct udphdr *) &ipv6_hdr[1];
 }
