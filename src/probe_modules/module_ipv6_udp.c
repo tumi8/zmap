@@ -14,6 +14,7 @@
 #define _GNU_SOURCE 1
 #endif
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -37,7 +38,7 @@
 
 static char *udp_send_msg = NULL;
 static int udp_send_msg_len = 0;
-static int udp_send_substitutions = 0;
+//static int udp_send_substitutions = 0;
 static udp_payload_template_t *udp_template = NULL;
 
 static const char *udp_send_msg_default = "GET / HTTP/1.1\r\nHost: www\r\n\r\n";
@@ -89,9 +90,9 @@ const unsigned char ipv6_charset_all[257]  = {
 	0x00
 };
 
-
-
 static int num_ports;
+#define SOURCE_PORT_VALIDATION_MODULE_DEFAULT false; // default to NOT validating source port
+static bool should_validate_src_port = SOURCE_PORT_VALIDATION_MODULE_DEFAULT
 
 probe_module_t module_ipv6_udp;
 
@@ -168,9 +169,9 @@ int ipv6_udp_global_initialize(struct state_conf *conf) {
 	} else if (strcmp(args, "file") == 0 || strcmp(args, "template") == 0) {
 		inp = fopen(c, "rb");
 		if (!inp) {
-			free(args);
 			free(udp_send_msg);
 			log_fatal("udp", "could not open UDP data file '%s'\n", c);
+			free(args);
 			exit(1);
 		}
 		free(udp_send_msg);
@@ -193,9 +194,9 @@ int ipv6_udp_global_initialize(struct state_conf *conf) {
 
 		for (i=0; i < udp_send_msg_len; i++) {
 			if (sscanf(c + (i*2), "%2x", &n) != 1) {
-				free(args);
 				free(udp_send_msg);
 				log_fatal("udp", "non-hex character: '%c'", c[i*2]);
+				free(args);
 				exit(1);
 			}
 			udp_send_msg[i] = (n & 0xff);
@@ -234,9 +235,17 @@ int ipv6_udp_global_cleanup(__attribute__((unused)) struct state_conf *zconf,
 	return EXIT_SUCCESS;
 }
 
-int ipv6_udp_init_perthread(void* buf, macaddr_t *src,
-		macaddr_t *gw, __attribute__((unused)) port_h_t dst_port,\
-		void **arg_ptr)
+int ipv6_udp_init_perthread(void **arg_ptr)
+{
+	// Seed our random number generator with the global generator
+	uint32_t seed = aesrand_getword(zconf.aes);
+	aesrand_t *aes = aesrand_init_from_seed(seed);
+	*arg_ptr = aes;
+
+	return EXIT_SUCCESS;
+}
+
+int ipv6_udp_prepare_packet(void *buf, macaddr_t *src, macaddr_t *gw, UNUSED void *arg_ptr)
 {
 	memset(buf, 0, MAX_PACKET_SIZE);
 	struct ether_header *eth_header = (struct ether_header *) buf;
@@ -246,7 +255,7 @@ int ipv6_udp_init_perthread(void* buf, macaddr_t *src,
 	make_ip6_header(ipv6_header, IPPROTO_UDP, payload_len);
 
 	struct udphdr *udp_header = (struct udphdr*)(&ipv6_header[1]);
-	make_udp_header(udp_header, zconf.target_port, payload_len);
+	make_udp_header(udp_header, payload_len);
 
 	char* payload = (char*)(&udp_header[1]);
 
@@ -256,16 +265,11 @@ int ipv6_udp_init_perthread(void* buf, macaddr_t *src,
 
 	memcpy(payload, udp_send_msg, udp_send_msg_len);
 
-	// Seed our random number generator with the global generator
-	uint32_t seed = aesrand_getword(zconf.aes);
-	aesrand_t *aes = aesrand_init_from_seed(seed);
-	*arg_ptr = aes;
-
 	return EXIT_SUCCESS;
 }
 
-int ipv6_udp_make_packet(void *buf, size_t *buf_len, __attribute__((unused)) ipaddr_n_t src_ip,
-		__attribute__((unused)) ipaddr_n_t dst_ip, uint8_t ttl, uint32_t *validation, int probe_num, void *arg)
+int ipv6_udp_make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t src_ip,
+		UNUSED ipaddr_n_t dst_ip, port_n_t dport, uint8_t ttl, uint32_t *validation, int probe_num, UNUSED uint16_t ip_id, void *arg)
 {
 	// From module_ipv6_udp_dns
 	struct ether_header *eth_header = (struct ether_header *) buf;
@@ -277,6 +281,7 @@ int ipv6_udp_make_packet(void *buf, size_t *buf_len, __attribute__((unused)) ipa
 	ip6_header->ip6_ctlun.ip6_un1.ip6_un1_hlim = ttl;
 	udp_header->uh_sport = htons(get_src_port(num_ports, probe_num,
 				     validation));
+	udp_header->uh_dport = dport;
 
 	// TODO FIXME
 /*
@@ -329,7 +334,8 @@ void ipv6_udp_print_packet(FILE *fp, void* packet)
 }
 
 void ipv6_udp_process_packet(const u_char *packet, UNUSED uint32_t len, fieldset_t *fs,
-		__attribute__((unused)) uint32_t *validation)
+		__attribute__((unused)) uint32_t *validation,
+		__attribute__((unused)) struct timespec ts)
 {
 	struct ip6_hdr *ipv6_hdr = (struct ip6_hdr *) &packet[sizeof(struct ether_header)];
 	if (ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt == IPPROTO_UDP) {
@@ -403,7 +409,7 @@ void ipv6_udp_process_packet(const u_char *packet, UNUSED uint32_t len, fieldset
 
 
 int _ipv6_udp_validate_packet(const struct ip *ip_hdr, uint32_t len,
-		UNUSED uint32_t *src_ip, uint32_t *validation)
+		UNUSED uint32_t *src_ip, uint32_t *validation, const struct port_conf *ports)
 {
 	struct ip6_hdr *ipv6_hdr = (struct ip6_hdr *) ip_hdr;
 /*
@@ -415,7 +421,7 @@ int _ipv6_udp_validate_packet(const struct ip *ip_hdr, uint32_t len,
 		// buffer not large enough to contain expected UDP header, i.e. IPv6 payload
 		return 0;
 	}
-	if (!ipv6_udp_validate_packet(ipv6_hdr, len, NULL, validation)) {
+	if (!ipv6_udp_validate_packet(ipv6_hdr, len, NULL, validation, num_ports, should_validate_src_port, ports)) {
 		return 0;
 	}
 	return 1;
@@ -773,6 +779,7 @@ probe_module_t module_ipv6_udp = {
 	.port_args = 1,
 	.thread_initialize = &ipv6_udp_init_perthread,
 	.global_initialize = &ipv6_udp_global_initialize,
+	.prepare_packet = &ipv6_udp_prepare_packet,
 	.make_packet = &ipv6_udp_make_packet,
 	.print_packet = &ipv6_udp_print_packet,
 	.validate_packet = &_ipv6_udp_validate_packet,

@@ -9,6 +9,7 @@
 // probe module for performing TCP Opt scans
 // based on TCP SYN module, with changes by Quirin Scheitle and Markus Sosnowski
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -26,6 +27,7 @@
 #include "module_tcp_synopt.h"
 
 
+
 probe_module_t module_tcp_synopt;
 static uint32_t num_ports;
 
@@ -33,6 +35,9 @@ static uint32_t num_ports;
 
 #define ZMAP_TCP_SYNOPT_TCP_HEADER_LEN 20
 #define ZMAP_TCP_SYNOPT_PACKET_LEN 54
+#define SOURCE_PORT_VALIDATION_MODULE_DEFAULT true; // default to validating source port
+static bool should_validate_src_port = SOURCE_PORT_VALIDATION_MODULE_DEFAULT
+
 
 static char *tcp_send_opts = NULL;
 static int tcp_send_opts_len = 0;
@@ -75,9 +80,9 @@ int tcpsynopt_global_initialize(struct state_conf *conf)
 
 		for (i=0; i < tcp_send_opts_len; i++) {
 			if (sscanf(c + (i*2), "%2x", &n) != 1) {
-				free(args);
 				free(tcp_send_opts);
 				log_fatal("udp", "non-hex character: '%c'", c[i*2]);
+				free(args);
 				exit(1);
 			}
 			tcp_send_opts[i] = (n & 0xff);
@@ -97,24 +102,22 @@ int tcpsynopt_global_initialize(struct state_conf *conf)
 	return EXIT_SUCCESS;
 }
 
-
-int tcpsynopt_init_perthread(void* buf, macaddr_t *src,
-		macaddr_t *gw, port_h_t dst_port,
-		__attribute__((unused)) void **arg_ptr)
+static int tcpsynopt_prepare_packet(void *buf, macaddr_t *src, macaddr_t *gw,
+				  UNUSED void *arg_ptr)
 {
-	memset(buf, 0, MAX_PACKET_SIZE);
+		memset(buf, 0, MAX_PACKET_SIZE);
 	struct ether_header *eth_header = (struct ether_header *) buf;
 	make_eth_header(eth_header, src, gw);
 	struct ip *ip_header = (struct ip*)(&eth_header[1]);
 	uint16_t len = htons(sizeof(struct ip) + ZMAP_TCP_SYNOPT_TCP_HEADER_LEN + tcp_send_opts_len);
 	make_ip_header(ip_header, IPPROTO_TCP, len);
 	struct tcphdr *tcp_header = (struct tcphdr*)(&ip_header[1]);
-	make_tcp_header(tcp_header, dst_port, TH_SYN);
+	make_tcp_header(tcp_header, TH_SYN);
 	return EXIT_SUCCESS;
 }
 
-int tcpsynopt_make_packet(void *buf, size_t *buf_len, ipaddr_n_t src_ip, ipaddr_n_t dst_ip,
-		uint8_t ttl, uint32_t *validation, int probe_num, __attribute__((unused)) void *arg)
+int tcpsynopt_make_packet(void *buf, size_t *buf_len, ipaddr_n_t src_ip, ipaddr_n_t dst_ip, port_n_t dport,
+		uint8_t ttl, uint32_t *validation, int probe_num, UNUSED uint16_t ip_id, UNUSED void *arg)
 {
 	struct ether_header *eth_header = (struct ether_header *)buf;
 	struct ip *ip_header = (struct ip*)(&eth_header[1]);
@@ -128,6 +131,7 @@ int tcpsynopt_make_packet(void *buf, size_t *buf_len, ipaddr_n_t src_ip, ipaddr_
 
 	tcp_header->th_sport = htons(get_src_port(num_ports,
 				probe_num, validation));
+	tcp_header->th_dport = dport;
 	tcp_header->th_seq = tcp_seq;
 
     memcpy(opts, tcp_send_opts, tcp_send_opts_len);
@@ -163,30 +167,34 @@ void tcpsynopt_print_packet(FILE *fp, void* packet)
 
 int tcpsynopt_validate_packet(const struct ip *ip_hdr, uint32_t len,
 		__attribute__((unused))uint32_t *src_ip,
-		uint32_t *validation)
+		uint32_t *validation,
+		const struct port_conf *ports)
 {
 	if (ip_hdr->ip_p != IPPROTO_TCP) {
 		return 0;
 	}
 	// (4*5 =) 20 bytes IP header + 20 bytes tcp hdr + 36 bytes = 76 byte
 	// reply packet may not contain any tcp options!
-	if ((4*ip_hdr->ip_hl + ZMAP_TCP_SYNOPT_TCP_HEADER_LEN + 0) > len) {
+	if ((((uint32_t) 4)*ip_hdr->ip_hl + ZMAP_TCP_SYNOPT_TCP_HEADER_LEN + ((uint32_t) 0)) > len) {
 		// buffer not large enough to contain expected tcp header
 		printf("buffer (%u) not large enough!\n" ,len);
 		return 0;
 	}
 	struct tcphdr *tcp = (struct tcphdr*)((char *) ip_hdr + 4*ip_hdr->ip_hl);
-	uint16_t sport = tcp->th_sport;
-	uint16_t dport = tcp->th_dport;
+	uint16_t sport = ntohs(tcp->th_sport);
+	uint16_t dport = ntohs(tcp->th_dport);
 	// validate source port
-	if (ntohs(sport) != zconf.target_port) {
-		//printf("validating... sport fail!\n");
-		return 0;
+	if (should_validate_src_port && !check_src_port(sport, ports)) {
+		return PACKET_INVALID;
 	}
 	// validate destination port
-	if (!check_dst_port(ntohs(dport), num_ports, validation)) {
+	if (!check_dst_port(dport, num_ports, validation)) {
 		//printf("validating... dport fail!\n");
 		return 0;
+	}
+	// check whether we'll ever send to this IP during the scan
+	if (!blocklist_is_allowed(*src_ip)) {
+		return PACKET_INVALID;
 	}
 	// validate tcp acknowledgement number
 	if (htonl(tcp->th_ack) != htonl(validation[0])+1) {
@@ -201,7 +209,8 @@ int tcpsynopt_validate_packet(const struct ip *ip_hdr, uint32_t len,
 
 void tcpsynopt_process_packet(const u_char *packet,
 		__attribute__((unused)) uint32_t len, fieldset_t *fs,
-	    __attribute__((unused)) uint32_t *validation)
+	    __attribute__((unused)) uint32_t *validation,
+		__attribute__((unused)) struct timespec ts)
 {
 	struct ip *ip_hdr = (struct ip *)&packet[sizeof(struct ether_header)];
 
@@ -227,7 +236,7 @@ probe_module_t module_tcp_synopt = {
 	.pcap_snaplen = 96+10*4, //max len
 	.port_args = 1,
 	.global_initialize = &tcpsynopt_global_initialize,
-	.thread_initialize = &tcpsynopt_init_perthread,
+	.prepare_packet = &tcpsynopt_prepare_packet,
 	.make_packet = &tcpsynopt_make_packet,
 	.print_packet = &tcpsynopt_print_packet,
 	.process_packet = &tcpsynopt_process_packet,

@@ -10,6 +10,7 @@
 
 /* module to perform IETF QUIC (draft-32) enumeration */
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -43,9 +44,10 @@ static inline uint64_t make_quic_conn_id(char a, char b, char c, char d, char e,
 }
 
 static int num_ports;
+#define SOURCE_PORT_VALIDATION_MODULE_DEFAULT false; // default to NOT validating source port
+static bool should_validate_src_port = SOURCE_PORT_VALIDATION_MODULE_DEFAULT
 
 probe_module_t module_quic_initial;
-static char filter_rule[30];
 uint64_t connection_id;
 
 void quic_initial_set_num_ports(int x) { num_ports = x; }
@@ -70,13 +72,7 @@ int quic_initial_global_initialize(struct state_conf *conf)
 
 	num_ports = conf->source_port_last - conf->source_port_first + 1;
 
-	char port[16];
-	sprintf(port, "%d", conf->target_port);
-	// answers have the target port as source
-	memcpy(filter_rule, "udp src port \0", 14);
-
-	module_quic_initial.pcap_filter = strncat(filter_rule, port, 16);
-	// set length of pcap
+		// set length of pcap
 	module_quic_initial.pcap_snaplen =
 	    sizeof(struct ether_header) + sizeof(struct ip) +
 	    sizeof(struct udphdr) + QUIC_PACKET_LENGTH;
@@ -98,11 +94,10 @@ int quic_initial_global_cleanup(
 	return EXIT_SUCCESS;
 }
 
-int quic_initial_init_perthread(void *buf, macaddr_t *src, macaddr_t *gw,
-				__attribute__((unused)) port_h_t dst_port,
-				__attribute__((unused)) void **arg_ptr)
+static int quic_initial_prepare_packet(void *buf, macaddr_t *src, macaddr_t *gw,
+				  UNUSED void *arg_ptr)
 {
-	// set length of udp msg
+		// set length of udp msg
 	int udp_send_msg_len = padding_length + sizeof(quic_long_hdr);
 	//log_debug("prepare", "UDP PAYLOAD LEN: %d", udp_send_msg_len);
 
@@ -117,7 +112,7 @@ int quic_initial_init_perthread(void *buf, macaddr_t *src, macaddr_t *gw,
 
 	struct udphdr *udp_header = (struct udphdr *)(&ip_header[1]);
 	len = sizeof(struct udphdr) + udp_send_msg_len;
-	make_udp_header(udp_header, zconf.target_port, len);
+	make_udp_header(udp_header, len);
 
 	char *payload = (char *)(&udp_header[1]);
 
@@ -131,9 +126,9 @@ int quic_initial_init_perthread(void *buf, macaddr_t *src, macaddr_t *gw,
 }
 
 int quic_initial_make_packet(void *buf, size_t *buf_len,
-			     ipaddr_n_t src_ip, ipaddr_n_t dst_ip,
+			     ipaddr_n_t src_ip, ipaddr_n_t dst_ip, port_n_t dport,
 			     UNUSED uint8_t ttl, uint32_t *validation,
-			     int probe_num, UNUSED void *arg)
+			     int probe_num, UNUSED uint16_t ip_id, UNUSED void *arg)
 {
 	struct ether_header *eth_header = (struct ether_header *)buf;
 	struct ip *ip_header = (struct ip *)(&eth_header[1]);
@@ -143,6 +138,7 @@ int quic_initial_make_packet(void *buf, size_t *buf_len,
 	ip_header->ip_dst.s_addr = dst_ip;
 	udp_header->uh_sport =
 	    htons(get_src_port(num_ports, probe_num, validation));
+	udp_header->uh_dport = dport;
 
 	uint8_t *payload = (uint8_t *)&udp_header[1];
 	int payload_len = 0;
@@ -289,7 +285,7 @@ void quic_initial_process_packet(const u_char *packet, UNUSED uint32_t len,
 
 int quic_initial_validate_packet(const struct ip *ip_hdr, uint32_t len,
 				 __attribute__((unused)) uint32_t *src_ip,
-				 UNUSED uint32_t *validation)
+				 UNUSED uint32_t *validation, const struct port_conf *ports)
 {
 	// We only want to process UDP datagrams
 	if (ip_hdr->ip_p != IPPROTO_UDP) {
@@ -304,6 +300,12 @@ int quic_initial_validate_packet(const struct ip *ip_hdr, uint32_t len,
 	uint16_t sport = ntohs(udp->uh_dport);
 	if (!check_dst_port(sport, num_ports, validation)) {
 		return PACKET_INVALID;
+	}
+	if (should_validate_src_port == SRC_PORT_VALIDATION) {
+		uint16_t sport = ntohs(udp->uh_sport);
+		if (!check_src_port(sport, ports)) {
+			return PACKET_INVALID;
+		}
 	}
 	if (!blocklist_is_allowed(*src_ip)) {
 		return PACKET_INVALID;
@@ -330,8 +332,8 @@ probe_module_t module_quic_initial = {
     // this gets replaced by the actual payload we expect to get back
     .pcap_snaplen = 1500,
     .port_args = 1,
-    .thread_initialize = &quic_initial_init_perthread,
     .global_initialize = &quic_initial_global_initialize,
+    .prepare_packet = &quic_initial_prepare_packet,
     .make_packet = &quic_initial_make_packet,
     .print_packet = &quic_initial_print_packet,
     .validate_packet = &quic_initial_validate_packet,

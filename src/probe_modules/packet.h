@@ -16,12 +16,12 @@
 
 #include "../../lib/includes.h"
 #include "../../lib/blocklist.h"
+#include "../../lib/pbm.h"
 #include "../state.h"
+#include "../send.h"
 
 #ifndef PACKET_H
 #define PACKET_H
-
-#define MAX_PACKET_SIZE 4096
 
 #define ICMP_UNREACH_HEADER_SIZE 8
 
@@ -30,31 +30,35 @@
 
 #define ICMP_HEADER_SIZE 8
 
-#define PRINT_PACKET_SEP                                                       \
+#define PRINT_PACKET_SEP \
 	"------------------------------------------------------\n"
 
-#define CLASSIFICATION_SUCCESS_FIELDSET_FIELDS \
-    {.name = "classification", \
-     .type = "string", \
-     .desc = "packet classification"}, \
-    {.name = "success", \
-     .type = "bool", \
-     .desc = "is response considered success"}
+#define CLASSIFICATION_SUCCESS_FIELDSET_FIELDS           \
+	{.name = "classification",                       \
+	 .type = "string",                               \
+	 .desc = "packet classification"},               \
+	{                                                \
+		.name = "success", .type = "bool",       \
+		.desc = "is response considered success" \
+	}
 
 #define CLASSIFICATION_SUCCESS_FIELDSET_LEN 2
 
-#define ICMP_FIELDSET_FIELDS \
-    {.name = "icmp_responder", \
-     .type = "string", \
-     .desc = "Source IP of ICMP_UNREACH messages"}, \
-    {.name = "icmp_type", .type = "int", .desc = "icmp message type"}, \
-    {.name = "icmp_code", .type = "int", .desc = "icmp message sub type code"}, \
-    {.name = "icmp_unreach_str", \
-     .type = "string", \
-     .desc = "for icmp_unreach responses, the string version of icmp_code (e.g. network-unreach)"}
+#define ICMP_FIELDSET_FIELDS                                                                             \
+	{.name = "icmp_responder",                                                                       \
+	 .type = "string",                                                                               \
+	 .desc = "Source IP of ICMP_UNREACH messages"},                                                  \
+	    {.name = "icmp_type", .type = "int", .desc = "icmp message type"},                           \
+	    {.name = "icmp_code",                                                                        \
+	     .type = "int",                                                                              \
+	     .desc = "icmp message sub type code"},                                                      \
+	{                                                                                                \
+		.name = "icmp_unreach_str", .type = "string",                                            \
+		.desc =                                                                                  \
+		    "for icmp_unreach responses, the string version of icmp_code (e.g. network-unreach)" \
+	}
 
 #define ICMP_FIELDSET_LEN 4
-
 
 typedef unsigned short __attribute__((__may_alias__)) alias_unsigned_short;
 
@@ -63,12 +67,12 @@ void make_eth_header_ethertype(struct ether_header *ethh, macaddr_t *src, macadd
 
 void make_ip_header(struct ip *iph, uint8_t, uint16_t);
 void make_ip6_header(struct ip6_hdr *iph, uint8_t, uint16_t);
-void make_tcp_header(struct tcphdr *, port_h_t, uint16_t);
+void make_tcp_header(struct tcphdr *, uint16_t th_flags);
 size_t set_mss_option(struct tcphdr *tcp_header);
+size_t set_tcp_options(struct tcphdr *tcp_header, uint8_t os);
 void make_icmp_header(struct icmp *);
 void make_icmp6_header(struct icmp6_hdr *);
-void make_udp_header(struct udphdr *udp_header, port_h_t dest_port,
-		     uint16_t len);
+void make_udp_header(struct udphdr *udp_header, uint16_t len);
 void fprintf_ip_header(FILE *fp, struct ip *iph);
 void fprintf_ipv6_header(FILE *fp, struct ip6_hdr *iph);
 void fprintf_eth_header(FILE *fp, struct ether_header *ethh);
@@ -80,7 +84,7 @@ static inline unsigned short in_checksum(unsigned short *ip_pkt, int len)
 		sum += *ip_pkt++;
 	}
 	if (len % 2 == 1) {
-		sum += *((unsigned char *) ip_pkt);
+		sum += *((unsigned char *)ip_pkt);
 	}
 	sum = (sum >> 16) + (sum & 0xffff);
 	return (unsigned short)(~sum);
@@ -93,21 +97,18 @@ static inline unsigned short in_icmp_checksum(unsigned short *ip_pkt, int len)
 		sum += *ip_pkt++;
 	}
 	if (len % 2 == 1) {
-		sum += *((unsigned char *) ip_pkt);
+		sum += *((unsigned char *)ip_pkt);
 	}
 	sum = (sum >> 16) + (sum & 0xffff);
 	return (unsigned short)(~sum);
 }
 
-static inline unsigned short
-zmap_ip_checksum(unsigned short *buf)
+static inline unsigned short zmap_ip_checksum(unsigned short *buf)
 {
 	return in_checksum(buf, (int)sizeof(struct ip));
 }
 
-
-static inline unsigned short
-icmp_checksum(unsigned short *buf, size_t buflen)
+static inline unsigned short icmp_checksum(unsigned short *buf, size_t buflen)
 {
 	return in_icmp_checksum(buf, buflen);
 }
@@ -152,10 +153,8 @@ static inline uint16_t ipv6_payload_checksum(
 	return (unsigned short) (~sum);
 }
 
-static inline uint16_t tcp_checksum(unsigned short len_tcp,
-						     uint32_t saddr,
-						     uint32_t daddr,
-						     struct tcphdr *tcp_pkt)
+static inline uint16_t tcp_checksum(unsigned short len_tcp, uint32_t saddr,
+				    uint32_t daddr, struct tcphdr *tcp_pkt)
 {
 	alias_unsigned_short *src_addr = (alias_unsigned_short *)&saddr;
 	alias_unsigned_short *dest_addr = (alias_unsigned_short *)&daddr;
@@ -190,8 +189,8 @@ static inline uint16_t tcp_checksum(unsigned short len_tcp,
 }
 
 // Returns 0 if dst_port is outside the expected valid range, non-zero otherwise
-static inline int
-check_dst_port(uint16_t port, int num_ports, uint32_t *validation)
+static inline int check_dst_port(uint16_t port, int num_ports,
+				 uint32_t *validation)
 {
 	if (port > zconf.source_port_last || port < zconf.source_port_first) {
 		return 0;
@@ -200,14 +199,23 @@ check_dst_port(uint16_t port, int num_ports, uint32_t *validation)
 	int32_t min = validation[1] % num_ports;
 	int32_t max = (validation[1] + zconf.packet_streams - 1) % num_ports;
 
-	return (((max - min) % num_ports) >= ((to_validate - min) % num_ports));
+	if (min <= max) {
+		return (to_validate <= max && to_validate >= min);
+	} else {
+		return ((to_validate <= max) != (to_validate >= min));
+	}
 }
 
-static inline uint16_t
-get_src_port(int num_ports, int probe_num, uint32_t *validation)
+static inline uint16_t get_src_port(int num_ports, int probe_num,
+				    uint32_t *validation)
 {
 	return zconf.source_port_first +
 	       ((validation[1] + probe_num) % num_ports);
+}
+
+static inline int check_src_port(uint16_t port, const struct port_conf *ports)
+{
+	return bm_check(ports->port_bitmap, port);
 }
 
 static inline struct ip *get_ip_header(const u_char *packet, uint32_t len)
@@ -218,6 +226,17 @@ static inline struct ip *get_ip_header(const u_char *packet, uint32_t len)
 	return (struct ip *)&packet[sizeof(struct ether_header)];
 }
 
+static inline struct tcphdr *get_tcp_header_ipv6(struct ip6_hdr *ipv6_hdr,
+					    uint32_t len)
+{
+
+	if ((ntohs(ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_plen)) > len) {
+		// buffer not large enough to contain expected tcp header, i.e. IPv6 payload
+		return NULL;
+	}
+	return (struct tcphdr*) (&ipv6_hdr[1]);
+}
+
 static inline struct tcphdr *get_tcp_header(const struct ip *ip_hdr,
 					    uint32_t len)
 {
@@ -226,6 +245,16 @@ static inline struct tcphdr *get_tcp_header(const struct ip *ip_hdr,
 		return NULL;
 	}
 	return (struct tcphdr *)((char *)ip_hdr + 4 * ip_hdr->ip_hl);
+}
+
+static inline struct udphdr *get_udp_header_ipv6(const struct ip6_hdr *ipv6_hdr,
+					    uint32_t len)
+{
+	if (ntohs(ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_plen) > len) {
+		// buffer not large enough to contain expected UDP header, i.e. IPv6 payload
+		return NULL;
+	}
+	return (struct udphdr *) &ipv6_hdr[1];
 }
 
 static inline struct udphdr *get_udp_header(const struct ip *ip_hdr,
@@ -249,9 +278,9 @@ static inline struct icmp *get_icmp_header(const struct ip *ip_hdr,
 }
 
 static inline uint8_t *get_udp_payload(const struct udphdr *udp,
-				    UNUSED uint32_t len)
+				       UNUSED uint32_t len)
 {
-	return (uint8_t*)(&udp[1]);
+	return (uint8_t *)(&udp[1]);
 }
 
 static inline struct ip *get_inner_ip_header(const struct icmp *icmp,

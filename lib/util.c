@@ -44,6 +44,22 @@ int max_int(int a, int b)
 	return b;
 }
 
+int min_int(int a, int b)
+{
+	if (a >= b) {
+		return b;
+	}
+	return a;
+}
+
+uint64_t min_uint64_t(uint64_t a, uint64_t b)
+{
+	if (a >= b) {
+		return b;
+	}
+	return a;
+}
+
 void enforce_range(const char *name, int v, int min, int max)
 {
 	if (check_range(v, min, max) == EXIT_FAILURE) {
@@ -128,8 +144,11 @@ void fprintw(FILE *f, const char *s, size_t w)
 	free(news);
 }
 
-uint32_t parse_max_hosts(char *max_targets)
+// parse a string representing a number/percentage of targets
+// A percentage is interpreted as percent of the search space, so 2^32 * port_count
+uint64_t parse_max_targets(char *max_targets, int port_count)
 {
+	assert(port_count > 0);
 	char *end;
 	errno = 0;
 	double v = strtod(max_targets, &end);
@@ -137,15 +156,16 @@ uint32_t parse_max_hosts(char *max_targets)
 		log_fatal("argparse", "can't convert max-targets to a number");
 	}
 	if (end[0] == '%' && end[1] == '\0') {
-		// treat as percentage
-		v = v * ((unsigned long long int)1 << 32) / 100.;
+		// treat as percentage of the search space, so percent of 2^32 * num_ports
+		uint64_t search_space = ((uint64_t)1 << 32) * port_count;
+		v = v * search_space / 100.;
 	} else if (end[0] != '\0') {
 		log_fatal("eargparse", "extra characters after max-targets");
 	}
 	if (v <= 0) {
 		return 0;
-	} else if (v >= ((unsigned long long int)1 << 32)) {
-		return 0xFFFFFFFF;
+	} else if (v >= (((uint64_t)1 << 32) * port_count)) {
+		return (((uint64_t)1 << 32) * port_count);
 	} else {
 		return v;
 	}
@@ -254,7 +274,7 @@ int file_exists(char *name)
 #include <uuid/uuid.h>
 #endif
 
-int drop_privs()
+int drop_privs(void)
 {
 	struct passwd *pw;
 	if (geteuid() != 0) {
@@ -341,3 +361,23 @@ int set_cpu(uint32_t core)
 }
 
 #endif
+
+double now(void)
+{
+	struct timeval now;
+	gettimeofday(&now, NULL);
+	return (double)now.tv_sec + (double)now.tv_usec / 1000000.;
+}
+
+double steady_now(void)
+{
+#if defined(_POSIX_TIMERS) && defined(_POSIX_MONOTONIC_CLOCK)
+	struct timespec tp;
+	clock_gettime(CLOCK_MONOTONIC, &tp);
+	return (double)tp.tv_sec + (double)tp.tv_nsec / 1000000000.;
+#else
+	struct timeval now;
+	gettimeofday(&now, NULL);
+	return (double)now.tv_sec + (double)now.tv_usec / 1000000.;
+#endif
+}

@@ -14,7 +14,7 @@
 #define _GNU_SOURCE 1
 #endif
 
-
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -31,12 +31,16 @@
 
 #include "module_tcp_synopt.h"
 
+
 probe_module_t module_ipv6_tcp_synopt;
 static uint32_t num_ports;
 
 #define MAX_OPT_LEN 40
 #define ZMAPV6_TCP_SYNOPT_TCP_HEADER_LEN 20
 #define ZMAPV6_TCP_SYNOPT_PACKET_LEN 74
+#define SOURCE_PORT_VALIDATION_MODULE_DEFAULT true; // default to validating source port
+static bool should_validate_src_port = SOURCE_PORT_VALIDATION_MODULE_DEFAULT
+
 
 static char *tcp_send_opts = NULL;
 static int tcp_send_opts_len = 0;
@@ -85,9 +89,9 @@ int ipv6_tcp_synopt_global_initialize(struct state_conf *conf)
 
 		for (i=0; i < tcp_send_opts_len; i++) {
 			if (sscanf(c + (i*2), "%2x", &n) != 1) {
-				free(args);
 				free(tcp_send_opts);
 				log_fatal("udp", "non-hex character: '%c'", c[i*2]);
+				free(args);
 				exit(1);
 			}
 			tcp_send_opts[i] = (n & 0xff);
@@ -106,36 +110,34 @@ int ipv6_tcp_synopt_global_initialize(struct state_conf *conf)
 	return EXIT_SUCCESS;
 }
 
-int ipv6_tcp_synopt_init_perthread(void* buf, macaddr_t *src,
-		macaddr_t *gw, port_h_t dst_port,
-		__attribute__((unused)) void **arg_ptr)
+static int ipv6_tcp_synopt_prepare_packet(void *buf, macaddr_t *src, macaddr_t *gw,
+				  UNUSED void *arg_ptr)
 {
-	memset(buf, 0, MAX_PACKET_SIZE);
 	struct ether_header *eth_header = (struct ether_header *) buf;
 	make_eth_header_ethertype(eth_header, src, gw, ETHERTYPE_IPV6);
 	struct ip6_hdr *ip6_header = (struct ip6_hdr*)(&eth_header[1]);
 	uint16_t payload_len = ZMAPV6_TCP_SYNOPT_TCP_HEADER_LEN+tcp_send_opts_len;
 	make_ip6_header(ip6_header, IPPROTO_TCP, payload_len);
 	struct tcphdr *tcp_header = (struct tcphdr*)(&ip6_header[1]);
-	make_tcp_header(tcp_header, dst_port, TH_SYN);
+	make_tcp_header(tcp_header, TH_SYN);
 	return EXIT_SUCCESS;
 }
 
-int ipv6_tcp_synopt_make_packet(void *buf, size_t *buf_len, __attribute__((unused)) ipaddr_n_t src_ip, __attribute__((unused)) ipaddr_n_t dst_ip,
-        uint8_t ttl, uint32_t *validation, int probe_num, void *arg)
+int ipv6_tcp_synopt_make_packet(void *buf, size_t *buf_len, __attribute__((unused)) ipaddr_n_t src_ip, __attribute__((unused)) ipaddr_n_t dst_ip, port_n_t dport, 
+        uint8_t ttl, uint32_t *validation, int probe_num, UNUSED uint16_t ip_id, void *arg)
 {
 	struct ether_header *eth_header = (struct ether_header *) buf;
 	struct ip6_hdr *ip6_header = (struct ip6_hdr*) (&eth_header[1]);
 	struct tcphdr *tcp_header = (struct tcphdr*) (&ip6_header[1]);
 	unsigned char* opts = (unsigned char*)&tcp_header[1];
 	uint32_t tcp_seq = validation[0];
-
 	ip6_header->ip6_src = ((struct in6_addr *) arg)[0];
 	ip6_header->ip6_dst = ((struct in6_addr *) arg)[1];
 	ip6_header->ip6_ctlun.ip6_un1.ip6_un1_hlim = ttl;
 
 	tcp_header->th_sport = htons(get_src_port(num_ports,
 				probe_num, validation));
+	tcp_header->th_dport = dport;
 	tcp_header->th_seq = tcp_seq;
 
     memcpy(opts, tcp_send_opts, tcp_send_opts_len);
@@ -171,38 +173,40 @@ void ipv6_tcp_synopt_print_packet(FILE *fp, void* packet)
 
 int ipv6_tcp_synopt_validate_packet(const struct ip *ip_hdr, uint32_t len,
 		__attribute__((unused))uint32_t *src_ip,
-		uint32_t *validation)
+		uint32_t *validation,
+		const struct port_conf *ports)
 {
 	struct ip6_hdr *ipv6_hdr = (struct ip6_hdr *) ip_hdr;
 
 	if (ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt != IPPROTO_TCP) {
-		return 0;
+		return PACKET_INVALID;
 	}
 	if ((ntohs(ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_plen)) > len) {
-		// buffer not large enough to contain expected tcp header, i.e. IPv6 payload
-		return 0;
+		// buffer not large evnough to contain expected tcp header, i.e. IPv6 payload
+		return PACKET_INVALID;
 	}
 	struct tcphdr *tcp_hdr = (struct tcphdr*) (&ipv6_hdr[1]);
-	uint16_t sport = tcp_hdr->th_sport;
-	uint16_t dport = tcp_hdr->th_dport;
+	port_h_t sport = ntohs(tcp_hdr->th_sport);
+	port_h_t dport = ntohs(tcp_hdr->th_dport);
 	// validate source port
-	if (ntohs(sport) != zconf.target_port) {
-		return 0;
+	if (should_validate_src_port && !check_src_port(sport, ports)) {
+		return PACKET_INVALID;
 	}
 	// validate destination port
-	if (!check_dst_port(ntohs(dport), num_ports, validation)) {
+	if (!check_dst_port(dport, num_ports, validation)) {
 		return 0;
 	}
 	// validate tcp acknowledgement number
-	if (htonl(tcp_hdr->th_ack) != htonl(validation[0])+1) {
-		return 0;
+	if (htonl(tcp_hdr->th_ack) != htonl(validation[0]) + 1) {
+		return PACKET_INVALID;
 	}
-	return 1;
+	return PACKET_VALID;
 }
 
 void ipv6_tcp_synopt_process_packet(const u_char *packet,
 		__attribute__((unused)) uint32_t len, fieldset_t *fs,
-		__attribute__((unused)) uint32_t *validation)
+		__attribute__((unused)) uint32_t *validation,
+		 __attribute__((unused)) struct timespec ts)
 {
 	struct ether_header *eth_hdr = (struct ether_header *) packet;
 	struct ip6_hdr *ipv6_hdr = (struct ip6_hdr *) (&eth_hdr[1]);
@@ -220,7 +224,7 @@ probe_module_t module_ipv6_tcp_synopt = {
 	.pcap_snaplen = 116+10*4, // max option len
 	.port_args = 1,
 	.global_initialize = &ipv6_tcp_synopt_global_initialize,
-	.thread_initialize = &ipv6_tcp_synopt_init_perthread,
+	.prepare_packet = &ipv6_tcp_synopt_prepare_packet,
 	.make_packet = &ipv6_tcp_synopt_make_packet,
 	.print_packet = &ipv6_tcp_synopt_print_packet,
 	.process_packet = &ipv6_tcp_synopt_process_packet,

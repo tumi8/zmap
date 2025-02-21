@@ -42,9 +42,8 @@ int icmp6_echo_global_initialize(struct state_conf *conf)
 	return EXIT_SUCCESS;
 }
 
-static int icmp6_echo_init_perthread(void* buf, macaddr_t *src,
-		macaddr_t *gw, __attribute__((unused)) port_h_t dst_port,
-		__attribute__((unused)) void **arg_ptr)
+static int icmp6_echo_prepare_packet(void *buf, macaddr_t *src, macaddr_t *gw,
+				    UNUSED void *arg_ptr)
 {
 	memset(buf, 0, MAX_PACKET_SIZE);
 
@@ -62,7 +61,7 @@ static int icmp6_echo_init_perthread(void* buf, macaddr_t *src,
 	return EXIT_SUCCESS;
 }
 
-static int icmp6_echo_make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t src_ip,  UNUSED ipaddr_n_t dst_ip, uint8_t ttl, uint32_t *validation, UNUSED int probe_num, UNUSED void *arg)
+static int icmp6_echo_make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t src_ip,  UNUSED ipaddr_n_t dst_ip, UNUSED port_n_t dst_port, uint8_t ttl, uint32_t *validation, UNUSED int probe_num, UNUSED uint16_t ip_id, UNUSED void *arg)
 {
 	struct ether_header *eth_header = (struct ether_header *) buf;
 	struct ip6_hdr *ip6_header = (struct ip6_hdr *)(&eth_header[1]);
@@ -110,7 +109,7 @@ static void icmp6_echo_print_packet(FILE *fp, void* packet)
 
 
 static int icmp6_validate_packet(const struct ip *ip_hdr,
-		uint32_t len, __attribute__((unused)) uint32_t *src_ip, uint32_t *validation)
+		uint32_t len, __attribute__((unused)) uint32_t *src_ip, uint32_t *validation, UNUSED const struct port_conf *ports)
 {
     struct ip6_hdr *ip6_hdr = (struct ip6_hdr*) ip_hdr;
 
@@ -142,7 +141,7 @@ static int icmp6_validate_packet(const struct ip *ip_hdr,
 		icmp6_h = (struct icmp6_hdr *) &ip6_hdr[1];
 
 		// Send original src and dst IP as data in ICMPv6 payload and regenerate the validation here
-        validate_gen_ipv6(&ip6_hdr->ip6_dst, &ip6_hdr->ip6_src,
+        validate_gen_ipv6(&ip6_hdr->ip6_dst, &ip6_hdr->ip6_src, 0,
 			     (uint8_t *) validation);
 	}
 	// validate icmp id
@@ -160,7 +159,8 @@ static int icmp6_validate_packet(const struct ip *ip_hdr,
 
 static void icmp6_echo_process_packet(const u_char *packet,
 		__attribute__((unused)) uint32_t len, fieldset_t *fs,
-		__attribute__((unused)) uint32_t *validation)
+		__attribute__((unused)) uint32_t *validation,
+		UNUSED const struct timespec ts)
 {
 	struct ip6_hdr *ip6_hdr = (struct ip6_hdr *) &packet[sizeof(struct ether_header)];
 	struct icmp6_hdr *icmp6_hdr = (struct icmp6_hdr *) (&ip6_hdr[1]);
@@ -245,7 +245,7 @@ probe_module_t module_icmp6_echoscan = {
 	.pcap_snaplen =  118, // 14 ethernet header + 40 IPv6 header + 8 ICMPv6 header + 40 inner IPv6 header + 8 inner ICMPv6 header + 8 payload
 	.port_args = 0,
 	.global_initialize = &icmp6_echo_global_initialize,
-	.thread_initialize = &icmp6_echo_init_perthread,
+	.prepare_packet = &icmp6_echo_prepare_packet,
 	.make_packet = &icmp6_echo_make_packet,
 	.print_packet = &icmp6_echo_print_packet,
 	.process_packet = &icmp6_echo_process_packet,

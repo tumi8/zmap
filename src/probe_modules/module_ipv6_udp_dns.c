@@ -16,6 +16,7 @@
 #define _GNU_SOURCE 1
 #endif
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -73,6 +74,8 @@ static char *udp_send_msg = NULL;
 static int udp_send_msg_len = 0;
 
 static int num_ports;
+#define SOURCE_PORT_VALIDATION_MODULE_DEFAULT false; // default to NOT validating source port
+static bool should_validate_src_port = SOURCE_PORT_VALIDATION_MODULE_DEFAULT
 
 probe_module_t module_ipv6_udp_dns;
 
@@ -239,9 +242,8 @@ int ipv6_udp_dns_global_cleanup(__attribute__((unused)) struct state_conf *zconf
 	return EXIT_SUCCESS;
 }
 
-int ipv6_udp_dns_init_perthread(void* buf, macaddr_t *src,
-		macaddr_t *gw, __attribute__((unused)) port_h_t dst_port,
-        __attribute__((unused)) void **arg_ptr) {
+int ipv6_udp_dns_prepare_packet(void *buf, macaddr_t *src, macaddr_t *gw, UNUSED void *arg_ptr)
+{
 	memset(buf, 0, MAX_PACKET_SIZE);
 	struct ether_header *eth_header = (struct ether_header *) buf;
 	make_eth_header_ethertype(eth_header, src, gw, ETHERTYPE_IPV6);
@@ -250,7 +252,7 @@ int ipv6_udp_dns_init_perthread(void* buf, macaddr_t *src,
 	make_ip6_header(ipv6_header, IPPROTO_UDP, payload_len);
 
 	struct udphdr *udp_header = (struct udphdr*)(&ipv6_header[1]);
-	make_udp_header(udp_header, zconf.target_port, payload_len);
+	make_udp_header(udp_header, payload_len);
 
 	char* payload = (char*)(&udp_header[1]);
 
@@ -263,8 +265,8 @@ int ipv6_udp_dns_init_perthread(void* buf, macaddr_t *src,
 	return EXIT_SUCCESS;
 }
 
-int ipv6_udp_dns_make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t src_ip, UNUSED ipaddr_n_t dst_ip,
-		uint8_t ttl, uint32_t *validation, int probe_num, __attribute__((unused)) void *arg) {
+int ipv6_udp_dns_make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t src_ip, UNUSED ipaddr_n_t dst_ip, port_n_t dport,
+		uint8_t ttl, uint32_t *validation, int probe_num, UNUSED uint16_t ip_id, void *arg) {
 	struct ether_header *eth_header = (struct ether_header *) buf;
 	struct ip6_hdr *ip6_header = (struct ip6_hdr*) (&eth_header[1]);
 	struct udphdr *udp_header= (struct udphdr *) &ip6_header[1];
@@ -274,6 +276,7 @@ int ipv6_udp_dns_make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t src_i
 	ip6_header->ip6_ctlun.ip6_un1.ip6_un1_hlim = ttl;
 	udp_header->uh_sport = htons(get_src_port(num_ports, probe_num,
 				     validation));
+	udp_header->uh_dport = dport;
 
   // added missing code lines for modifying dns transaction id
 	dns_header *dns_header_p = (dns_header *)&udp_header[1];
@@ -303,7 +306,7 @@ void ipv6_udp_dns_print_packet(FILE *fp, void* packet) {
 }
 
 int ipv6_udp_dns_validate_packet(const struct ip *ip_hdr, uint32_t len,
-		UNUSED uint32_t *src_ip, uint32_t *validation)
+		UNUSED uint32_t *src_ip, uint32_t *validation, const struct port_conf *ports)
 {
 	struct ip6_hdr *ipv6_hdr = (struct ip6_hdr *) ip_hdr;
 /*
@@ -315,14 +318,13 @@ int ipv6_udp_dns_validate_packet(const struct ip *ip_hdr, uint32_t len,
 		// buffer not large enough to contain expected UDP header, i.e. IPv6 payload
 		return 0;
 	}
-	if (!ipv6_udp_validate_packet(ipv6_hdr, len, NULL, validation)) {
+	if (!ipv6_udp_validate_packet(ipv6_hdr, len, NULL, validation,num_ports, should_validate_src_port, ports)) {
 		return 0;
 	}
 	return 1;
 }
 
-void ipv6_udp_dns_process_packet(const u_char *packet, UNUSED uint32_t len, fieldset_t *fs,
-		__attribute__((unused)) uint32_t *validation) {
+void ipv6_udp_dns_process_packet(const u_char *packet, UNUSED uint32_t len, fieldset_t *fs, __attribute__((unused)) uint32_t *validation, UNUSED struct timespec ts) {
 	struct ip6_hdr *ipv6_hdr = (struct ip6_hdr *) &packet[sizeof(struct ether_header)];
 	if (ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt == IPPROTO_UDP) {
 		struct udphdr *udp_hdr = (struct udphdr *) (&ipv6_hdr[1]);
@@ -414,8 +416,8 @@ probe_module_t module_ipv6_udp_dns = {
 	.pcap_filter = "ip6 proto 17 || icmp6",
 	.pcap_snaplen = 1500,			// TO BE CHANGED FOR EXSTIMATE REFLECTION SIZE
 	.port_args = 1,
-	.thread_initialize = &ipv6_udp_dns_init_perthread,
 	.global_initialize = &ipv6_udp_dns_global_initialize,
+	.prepare_packet = &ipv6_udp_dns_prepare_packet,
 	.make_packet = &ipv6_udp_dns_make_packet,
 	.print_packet = &ipv6_udp_dns_print_packet,
 	.validate_packet = &ipv6_udp_dns_validate_packet,

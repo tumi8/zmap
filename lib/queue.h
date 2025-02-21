@@ -23,7 +23,7 @@
 #include <pthread.h>
 
 typedef struct zqueue_node {
-	char *data;
+	void *data;
 	struct zqueue_node *prev;
 	struct zqueue_node *next;
 } znode_t;
@@ -37,9 +37,9 @@ typedef struct zqueue {
 	pthread_cond_t empty;
 } zqueue_t;
 
-zqueue_t *queue_init();
+zqueue_t *queue_init(void);
 int is_empty(zqueue_t *queue);
-void push_back(char *data, zqueue_t *queue);
+void push_back(void *data, zqueue_t *queue);
 znode_t *pop_front(zqueue_t *queue);
 znode_t *pop_front_unsafe(zqueue_t *queue);
 znode_t *get_front(zqueue_t *queue);

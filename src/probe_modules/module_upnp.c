@@ -6,8 +6,8 @@
  * of the License at http://www.apache.org/licenses/LICENSE-2.0
  */
 
+#include <stdbool.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <stdint.h>
 #include <unistd.h>
 #include <string.h>
@@ -22,6 +22,8 @@
 #include "module_udp.h"
 
 #define ICMP_UNREACH_HEADER_SIZE 8
+#define SOURCE_PORT_VALIDATION_MODULE_DEFAULT true; // default to validating source port
+static bool should_validate_src_port = SOURCE_PORT_VALIDATION_MODULE_DEFAULT
 
 static const char *upnp_query = "M-SEARCH * HTTP/1.1\r\n"
 				"Host:239.255.255.250:1900\r\n"
@@ -35,13 +37,16 @@ static int num_ports;
 int upnp_global_initialize(struct state_conf *state)
 {
 	num_ports = state->source_port_last - state->source_port_first + 1;
+	if (state->validate_source_port_override == VALIDATE_SRC_PORT_DISABLE_OVERRIDE) {
+		log_debug("upnp", "disabling source port validation");
+		should_validate_src_port = false;
+	}
 	udp_set_num_ports(num_ports);
 	return EXIT_SUCCESS;
 }
 
-int upnp_init_perthread(void *buf, macaddr_t *src, macaddr_t *gw,
-			port_h_t dst_port,
-			UNUSED void **arg_ptr)
+int upnp_prepare_packet(void *buf, macaddr_t *src, macaddr_t *gw,
+			UNUSED void *arg_ptr)
 {
 	memset(buf, 0, MAX_PACKET_SIZE);
 	struct ether_header *eth_header = (struct ether_header *)buf;
@@ -54,7 +59,7 @@ int upnp_init_perthread(void *buf, macaddr_t *src, macaddr_t *gw,
 
 	struct udphdr *udp_header = (struct udphdr *)(&ip_header[1]);
 	len = sizeof(struct udphdr) + strlen(upnp_query);
-	make_udp_header(udp_header, dst_port, len);
+	make_udp_header(udp_header, len);
 
 	char *payload = (char *)(&udp_header[1]);
 
@@ -63,23 +68,22 @@ int upnp_init_perthread(void *buf, macaddr_t *src, macaddr_t *gw,
 	       MAX_PACKET_SIZE);
 
 	assert(MAX_PACKET_SIZE - ((char *)payload - (char *)buf) >
-	       (int)strlen(upnp_query));
+	       strlen(upnp_query));
 	strcpy(payload, upnp_query);
 
 	return EXIT_SUCCESS;
 }
 
 int upnp_validate_packet(const struct ip *ip_hdr, uint32_t len,
-			 uint32_t *src_ip, uint32_t *validation)
+			 uint32_t *src_ip, uint32_t *validation,
+			 const struct port_conf *ports)
 {
 	return udp_do_validate_packet(ip_hdr, len, src_ip, validation,
-				      num_ports, zconf.target_port);
+				      num_ports, should_validate_src_port, ports);
 }
 
-
-void upnp_process_packet(const u_char *packet,
-			 UNUSED uint32_t len, fieldset_t *fs,
-			 UNUSED uint32_t *validation,
+void upnp_process_packet(const u_char *packet, UNUSED uint32_t len,
+			 fieldset_t *fs, UNUSED uint32_t *validation,
 			 UNUSED struct timespec ts)
 {
 	struct ip *ip_hdr = (struct ip *)&packet[sizeof(struct ether_header)];
@@ -257,7 +261,7 @@ probe_module_t module_upnp = {
     .pcap_snaplen = 2048,
     .port_args = 1,
     .global_initialize = &upnp_global_initialize,
-    .thread_initialize = &upnp_init_perthread,
+    .prepare_packet = &upnp_prepare_packet,
     .make_packet = &udp_make_packet,
     .print_packet = &udp_print_packet,
     .process_packet = &upnp_process_packet,

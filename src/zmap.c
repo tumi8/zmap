@@ -30,8 +30,11 @@
 #include "../lib/util.h"
 #include "../lib/xalloc.h"
 #include "../lib/pbm.h"
+#include "../lib/aes128.h"
 
 #include "aesrand.h"
+#include "constants.h"
+#include "ports.h"
 #include "zopt.h"
 #include "send.h"
 #include "recv.h"
@@ -47,7 +50,7 @@
 
 #ifdef PFRING
 #include <pfring_zc.h>
-static int32_t distrib_func(pfring_zc_pkt_buff *pkt, pfring_zc_queue *in_queue,
+static int64_t distrib_func(pfring_zc_pkt_buff *pkt, pfring_zc_queue *in_queue,
 			    void *arg)
 {
 	(void)pkt;
@@ -57,7 +60,23 @@ static int32_t distrib_func(pfring_zc_pkt_buff *pkt, pfring_zc_queue *in_queue,
 }
 #endif
 
+#ifdef NETMAP
+#if !(defined(__FreeBSD__) || defined(__linux__))
+#error "NETMAP requires FreeBSD or Linux"
+#endif
+#include "if-netmap.h"
+#include <net/netmap_user.h>
+#include <sys/mman.h>
+#include <sys/ioctl.h>
+#include <fcntl.h>
+#endif
+
 pthread_mutex_t recv_ready_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+int get_num_cores(void)
+{
+	return sysconf(_SC_NPROCESSORS_ONLN);
+}
 
 typedef struct send_arg {
 	uint32_t cpu;
@@ -88,8 +107,11 @@ static void *start_send(void *arg)
 	send_arg_t *s = (send_arg_t *)arg;
 	log_debug("zmap", "Pinning a send thread to core %u", s->cpu);
 	set_cpu(s->cpu);
-	send_run(s->sock, s->shard);
+	int ret = send_run(s->sock, s->shard);
 	free(s);
+	if (ret != EXIT_SUCCESS) {
+		log_fatal("send", "send_run failed, terminating");
+	}
 	return NULL;
 }
 
@@ -112,7 +134,7 @@ static void *start_mon(void *arg)
 	return NULL;
 }
 
-static void start_zmap(void)
+static void network_config_init(void)
 {
 	if (zconf.iface == NULL) {
 		zconf.iface = get_default_iface();
@@ -158,7 +180,8 @@ static void start_zmap(void)
 			    "could not detect GW MAC address for %s on %s."
 			    " Try setting default gateway mac address (-G), or run"
 			    " \"arp <gateway_ip>\" in terminal."
-			    " If this is a newly launched machine, try completing an outgoing network connection (e.g. curl https://zmap.io), and trying again.",
+			    " If this is a newly launched machine, try completing an outgoing network connection (e.g. curl https://zmap.io), and trying again."
+			    " If you are using a VPN, supply the --iplayer flag (and provide an interface via -i)",
 			    inet_ntoa(gw_ip), zconf.iface);
 		}
 		zconf.gw_mac_set = 1;
@@ -166,6 +189,10 @@ static void start_zmap(void)
 	log_debug("send", "gateway MAC address %02x:%02x:%02x:%02x:%02x:%02x",
 		  zconf.gw_mac[0], zconf.gw_mac[1], zconf.gw_mac[2],
 		  zconf.gw_mac[3], zconf.gw_mac[4], zconf.gw_mac[5]);
+}
+
+static void start_zmap(void)
+{
 	// Initialization
 	assert(zconf.output_module && "no output module set");
 	log_debug("zmap", "output module: %s", zconf.output_module->name);
@@ -300,17 +327,17 @@ static void start_zmap(void)
 	log_info("zmap", "completed");
 }
 
-#define SET_IF_GIVEN(DST, ARG)                                                 \
-	{                                                                      \
-		if (args.ARG##_given) {                                        \
-			(DST) = args.ARG##_arg;                                \
-		};                                                             \
+#define SET_IF_GIVEN(DST, ARG)                  \
+	{                                       \
+		if (args.ARG##_given) {         \
+			(DST) = args.ARG##_arg; \
+		};                              \
 	}
-#define SET_BOOL(DST, ARG)                                                     \
-	{                                                                      \
-		if (args.ARG##_given) {                                        \
-			(DST) = 1;                                             \
-		};                                                             \
+#define SET_BOOL(DST, ARG)              \
+	{                               \
+		if (args.ARG##_given) { \
+			(DST) = 1;      \
+		};                      \
 	}
 
 int main(int argc, char *argv[])
@@ -394,15 +421,19 @@ int main(int argc, char *argv[])
 	// ZMap's default behavior is to provide a simple file of the unique IP
 	// addresses that responded successfully. We only use this simple "default"
 	// mode if none of {output module, output filter, output fields} are set.
-	zconf.default_mode = (!(args.output_module_given || args.output_filter_given || args.output_fields_given));
+	zconf.default_mode =
+	    (!(args.output_module_given || args.output_filter_given ||
+	       args.output_fields_given));
 	if (zconf.default_mode) {
-		log_info("zmap", "By default, ZMap will output the unique IP addresses "
-				"of hosts that respond successfully (e.g., SYN-ACK packet). This "
-				"is equivalent to running ZMap with the following flags: "
-				"--output-module=csv --output-fields=saddr --output-filter='"
-				"success=1 && repeat=0' --no-header-row. "
-				"If you want all responses, explicitly set an output module or "
-				"set --output-filter=\"\".");
+		log_info(
+		    "zmap",
+		    "By default, ZMap will output the unique IP addresses "
+		    "of hosts that respond successfully (e.g., SYN-ACK packet). This "
+		    "is equivalent to running ZMap with the following flags: "
+		    "--output-module=csv --output-fields=saddr --output-filter='"
+		    "success=1 && repeat=0' --no-header-row. "
+		    "If you want all responses, explicitly set an output module or "
+		    "set --output-filter=\"\".");
 		zconf.output_module = get_output_module_by_name("csv");
 		zconf.output_module_name = strdup("csv");
 		zconf.no_header_row = 1;
@@ -444,20 +475,19 @@ int main(int argc, char *argv[])
 		cmdline_parser_print_help();
 		printf("\nProbe Module (%s) Help:\n", zconf.probe_module->name);
 		if (zconf.probe_module->helptext) {
-			fprintw(stdout, zconf.probe_module->helptext,
-				80);
+			fprintw(stdout, zconf.probe_module->helptext, 80);
 		} else {
 			printf("no help text available\n");
 		}
 		assert(zconf.output_module && "no output module set");
-		const char *module_name = zconf.default_mode ? "Default" : zconf.output_module->name;
+		const char *module_name =
+		    zconf.default_mode ? "Default" : zconf.output_module->name;
 		printf("\nOutput Module (%s) Help:\n", module_name);
 
 		if (zconf.default_mode) {
 			fprintw(stdout, default_help_text, 80);
 		} else if (zconf.output_module->helptext) {
-			fprintw(stdout, zconf.output_module->helptext,
-				80);
+			fprintw(stdout, zconf.output_module->helptext, 80);
 		} else {
 			printf("no help text available\n");
 		}
@@ -483,6 +513,9 @@ int main(int argc, char *argv[])
 	if (cmdline_parser_required(&args, CMDLINE_PARSER_PACKAGE) != 0) {
 		exit(EXIT_FAILURE);
 	}
+
+	aes128_selftest();
+
 	// now that we know the probe module, let's find what it supports
 	memset(&zconf.fsconf, 0, sizeof(struct fieldset_conf));
 	// the set of fields made available to a user is constructed
@@ -500,88 +533,30 @@ int main(int argc, char *argv[])
 		exit(EXIT_SUCCESS);
 	}
 	// find the fields we need for the framework
-	zconf.fsconf.success_index =
-	    fds_get_index_by_name(fds, "success");
+	zconf.fsconf.success_index = fds_get_index_by_name(fds, "success");
 	if (zconf.fsconf.success_index < 0) {
 		log_fatal("fieldset", "probe module does not supply "
 				      "required success field.");
 	}
-	zconf.fsconf.app_success_index = fds_get_index_by_name(fds, "app_success");
+	zconf.fsconf.app_success_index =
+	    fds_get_index_by_name(fds, "app_success");
 
 	if (zconf.fsconf.app_success_index < 0) {
 		log_debug("fieldset", "probe module does not supply "
 				      "application success field.");
 	} else {
-		log_debug( "fieldset",
+		log_debug(
+		    "fieldset",
 		    "probe module supplies app_success"
 		    " output field. It will be included in monitor output");
 	}
-	zconf.fsconf.classification_index = fds_get_index_by_name(fds, "classification");
+	zconf.fsconf.classification_index =
+	    fds_get_index_by_name(fds, "classification");
 	if (zconf.fsconf.classification_index < 0) {
 		log_fatal("fieldset", "probe module does not supply "
 				      "required packet classification field.");
 	}
-	// process the list of requested output fields.
-	if (args.output_fields_given) {
-		zconf.raw_output_fields = args.output_fields_arg;
-	} else {
-		zconf.raw_output_fields = "saddr";
-	}
-	// add all fields if wildcard received
-	if (!strcmp(zconf.raw_output_fields, "*")) {
-		zconf.output_fields_len = zconf.fsconf.defs.len;
-		zconf.output_fields =
-		    xcalloc(zconf.fsconf.defs.len, sizeof(const char *));
-		for (int i = 0; i < zconf.fsconf.defs.len; i++) {
-			zconf.output_fields[i] =
-			    zconf.fsconf.defs.fielddefs[i].name;
-		}
-		fs_generate_full_fieldset_translation(&zconf.fsconf.translation,
-						      &zconf.fsconf.defs);
-	} else {
-		split_string(zconf.raw_output_fields,
-			     &(zconf.output_fields_len),
-			     &(zconf.output_fields));
-		for (int i = 0; i < zconf.output_fields_len; i++) {
-			log_debug("zmap", "requested output field (%i): %s", i,
-				  zconf.output_fields[i]);
-		}
-		// generate a translation that can be used to convert output
-		// from a probe module to the input for an output module
-		fs_generate_fieldset_translation(
-		    &zconf.fsconf.translation, &zconf.fsconf.defs,
-		    zconf.output_fields, zconf.output_fields_len);
-	}
-	// default filtering behavior is to drop unsuccessful and duplicates
-	if (zconf.default_mode) {
-		log_debug(
-		    "filter",
-		    "No output filter specified. Will use default: exclude duplicates and unssuccessful");
-	} else if (args.output_filter_given && strcmp(args.output_filter_arg, "")) {
-		// Run it through yyparse to build the expression tree
-		if (!parse_filter_string(args.output_filter_arg)) {
-			log_fatal("zmap", "Unable to parse filter expression");
-		}
-		// Check the fields used against the fieldset in use
-		if (!validate_filter(zconf.filter.expression,
-				     &zconf.fsconf.defs)) {
-			log_fatal("zmap", "Invalid filter");
-		}
-		zconf.output_filter_str = args.output_filter_arg;
-		log_debug("filter", "will use output filter %s",
-			  args.output_filter_arg);
-	} else if (args.output_filter_given) { // (empty filter argument)
-		log_debug("filter", "Empty output filter provided. ZMap will output all "
-				"results, including duplicate and non-successful responses.");
-	} else {
-		log_info("filter", "No output filter provided. ZMap will output all "
-				"results, including duplicate and non-successful responses (e.g., "
-				"RST and ICMP packets). If you want a filter similar to ZMap's "
-				"default behavior, you can set an output filter similar to the "
-				"following: --output-filter=\"success=1 && repeat=0\".");
-	}
 	zconf.ignore_invalid_hosts = args.ignore_blocklist_errors_given;
-
 	SET_BOOL(zconf.dryrun, dryrun);
 	SET_BOOL(zconf.quiet, quiet);
 	SET_BOOL(zconf.no_header_row, no_header_row);
@@ -598,7 +573,7 @@ int main(int argc, char *argv[])
 	SET_IF_GIVEN(zconf.rate, rate);
 	SET_IF_GIVEN(zconf.packet_streams, probes);
 	SET_IF_GIVEN(zconf.status_updates_file, status_updates_file);
-	SET_IF_GIVEN(zconf.num_retries, retries);
+	SET_IF_GIVEN(zconf.retries, retries);
 	SET_IF_GIVEN(zconf.max_sendto_failures, max_sendto_failures);
 	SET_IF_GIVEN(zconf.min_hitrate, min_hitrate);
 	SET_IF_GIVEN(zconf.ipv6_target_filename, ipv6_target_file);
@@ -608,7 +583,7 @@ int main(int argc, char *argv[])
 		log_fatal("ipv6", "No IPv6 source address specified");
 	}
 
-	if (zconf.num_retries < 0) {
+	if (zconf.retries < 0) {
 		log_fatal("zmap", "Invalid retry count");
 	}
 
@@ -658,17 +633,32 @@ int main(int argc, char *argv[])
 	zconf.destination_cidrs = args.inputs;
 	zconf.destination_cidrs_len = args.inputs_num;
 	if (zconf.destination_cidrs && zconf.blocklist_filename &&
-	    !strcmp(zconf.blocklist_filename, "/etc/zmap/blocklist.conf")) {
+	    !strcmp(zconf.blocklist_filename, ZMAP_DEFAULT_BLOCKLIST)) {
 		log_warn(
 		    "blocklist",
 		    "ZMap is currently using the default blocklist located "
-		    "at /etc/zmap/blocklist.conf. By default, this blocklist excludes locally "
+		    "at " ZMAP_DEFAULT_BLOCKLIST
+		    ". By default, this blocklist excludes locally "
 		    "scoped networks (e.g. 10.0.0.0/8, 127.0.0.1/8, and 192.168.0.0/16). If you are"
 		    " trying to scan local networks, you can change the default blocklist by "
-		    "editing the default ZMap configuration at /etc/zmap/zmap.conf.");
+		    "editing the default ZMap configuration at " ZMAP_DEFAULT_BLOCKLIST
+		    "."
+		    " If you have modified the default blocklist, you can ignore this message.");
 	}
 	SET_IF_GIVEN(zconf.allowlist_filename, allowlist_file);
-
+	zconf.validate_source_port_override = VALIDATE_SRC_PORT_UNSET_OVERRIDE;
+	if (args.validate_source_port_given) {
+		if (strcmp(args.validate_source_port_arg, "enable") == 0) {
+			// user wants to force source port validation
+			zconf.validate_source_port_override = VALIDATE_SRC_PORT_ENABLE_OVERRIDE;
+		} else if (strcmp(args.validate_source_port_arg, "disable") == 0) {
+			// user wants to force disable source port validation
+			zconf.validate_source_port_override = VALIDATE_SRC_PORT_DISABLE_OVERRIDE;
+		} else {
+			// unknown value
+			log_fatal("zmap", "unknown value for --validate-source-port, use either \"enable\" or \"disable\"");
+		}
+	}
 	if (zconf.probe_module->port_args) {
 		if (args.source_port_given) {
 			char *dash = strchr(args.source_port_arg, '-');
@@ -698,15 +688,164 @@ int main(int argc, char *argv[])
 				zconf.source_port_first = port;
 				zconf.source_port_last = port;
 			}
+			int num_source_ports = (zconf.source_port_last - zconf.source_port_first) + 1;
+			if (zconf.packet_streams > num_source_ports) {
+				log_fatal("zmap", "The number of probes sent to each target ip/port (%i) "
+						  "must be smaller than the size of the source port range (%u-%u, size: %i). "
+						  "Otherwise, some generated probe packets will be identical.",
+					  zconf.packet_streams,
+					  zconf.source_port_first, zconf.source_port_last,
+					  (zconf.source_port_last - zconf.source_port_first) + 1);
+			} else if (((float)zconf.packet_streams / (float)num_source_ports) > 0.1) {
+				log_warn("zmap", "ZMap is configured to use a relatively small number"
+						 " of source ports (fewer than 10x the number of probe packets per target ip/port),"
+						 " which limits the entropy that ZMap has available for "
+						 " validating responses. We recommend that you use a larger port range.");
+			}
 		}
-		if (!args.target_port_given) {
-			log_fatal(
-			    "zmap",
-			    "target port (-p) is required for this type of probe");
+		if (!args.target_ports_given) {
+			log_fatal("zmap",
+				  "target ports (-p) required for %s probe",
+				  zconf.probe_module->name);
 		}
-		enforce_range("target-port", args.target_port_arg, 0, 0xFFFF);
-		zconf.target_port = args.target_port_arg;
+
+	} else {
+		if (args.target_ports_given) {
+			log_fatal("zmap",
+				  "Destination port cannot be set for %s probe",
+				  zconf.probe_module->name);
+		}
 	}
+
+	zconf.ports = xmalloc(sizeof(struct port_conf));
+	zconf.ports->port_bitmap = bm_init();
+	if (args.target_ports_given) {
+		parse_ports(args.target_ports_arg, zconf.ports);
+	} else {
+		char *line = strdup("0");
+		parse_ports(line, zconf.ports);
+	}
+
+	if (zconf.ipv6_target_filename && zconf.ports->port_count > 1) {
+		log_fatal("ipv6", "IPv6 currently only supports one port");
+	}
+
+	if (args.dedup_method_given) {
+		if (!strcmp(args.dedup_method_arg, "default")) {
+			if (zconf.ports->port_count > 1) {
+				zconf.dedup_method = DEDUP_METHOD_WINDOW;
+			} else {
+				zconf.dedup_method = DEDUP_METHOD_FULL;
+			}
+		} else if (!strcmp(args.dedup_method_arg, "none")) {
+			zconf.dedup_method = DEDUP_METHOD_NONE;
+		} else if (!strcmp(args.dedup_method_arg, "full")) {
+			zconf.dedup_method = DEDUP_METHOD_FULL;
+		} else if (!strcmp(args.dedup_method_arg, "window")) {
+			zconf.dedup_method = DEDUP_METHOD_WINDOW;
+		} else {
+			log_fatal(
+			    "dedup",
+			    "Invalid dedup option provided. Legal options are: default, none, full, window.");
+		}
+	} else {
+		if (zconf.ports->port_count > 1) {
+			zconf.dedup_method = DEDUP_METHOD_WINDOW;
+		} else {
+			zconf.dedup_method = DEDUP_METHOD_FULL;
+		}
+	}
+	if (zconf.dedup_method == DEDUP_METHOD_FULL &&
+	    zconf.ports->port_count > 1) {
+		log_fatal(
+		    "dedup",
+		    "full response de-duplication is not supported for multiple ports");
+	}
+	if (zconf.dedup_method == DEDUP_METHOD_WINDOW) {
+		if (args.dedup_window_size_given) {
+			zconf.dedup_window_size = args.dedup_window_size_arg;
+		} else {
+			zconf.dedup_window_size = 1000000;
+		}
+		log_info("dedup",
+			 "Response deduplication method is %s with size %u",
+			 DEDUP_METHOD_NAMES[zconf.dedup_method],
+			 zconf.dedup_window_size);
+	} else {
+		log_info("dedup", "Response deduplication method is %s",
+			 DEDUP_METHOD_NAMES[zconf.dedup_method]);
+	}
+
+	// process the list of requested output fields.
+	if (args.output_fields_given) {
+		zconf.raw_output_fields = args.output_fields_arg;
+	} else {
+		if (zconf.ports->port_count > 1) {
+			zconf.raw_output_fields = "saddr,sport";
+		} else {
+			zconf.raw_output_fields = "saddr";
+		}
+	}
+	// add all fields if wildcard received
+	if (!strcmp(zconf.raw_output_fields, "*")) {
+		zconf.output_fields_len = zconf.fsconf.defs.len;
+		zconf.output_fields =
+		    xcalloc(zconf.fsconf.defs.len, sizeof(const char *));
+		for (int i = 0; i < zconf.fsconf.defs.len; i++) {
+			zconf.output_fields[i] =
+			    zconf.fsconf.defs.fielddefs[i].name;
+		}
+		fs_generate_full_fieldset_translation(&zconf.fsconf.translation,
+						      &zconf.fsconf.defs);
+	} else {
+		split_string(zconf.raw_output_fields,
+			     &(zconf.output_fields_len),
+			     &(zconf.output_fields));
+		for (int i = 0; i < zconf.output_fields_len; i++) {
+			log_debug("zmap", "requested output field (%i): %s", i,
+				  zconf.output_fields[i]);
+		}
+		// generate a translation that can be used to convert output
+		// from a probe module to the input for an output module
+		fs_generate_fieldset_translation(
+		    &zconf.fsconf.translation, &zconf.fsconf.defs,
+		    zconf.output_fields, zconf.output_fields_len);
+	}
+
+	// default filtering behavior is to drop unsuccessful and duplicates
+	if (zconf.default_mode) {
+		log_debug(
+		    "filter",
+		    "No output filter specified. Will use default: exclude duplicates and unsuccessful");
+	} else if (args.output_filter_given &&
+		   strcmp(args.output_filter_arg, "")) {
+		// Run it through yyparse to build the expression tree
+		if (!parse_filter_string(args.output_filter_arg)) {
+			log_fatal("zmap", "Unable to parse filter expression");
+		}
+		// Check the fields used against the fieldset in use
+		if (!validate_filter(zconf.filter.expression,
+				     &zconf.fsconf.defs)) {
+			log_fatal("zmap", "Invalid filter");
+		}
+		zconf.output_filter_str = args.output_filter_arg;
+		log_debug("filter", "will use output filter %s",
+			  args.output_filter_arg);
+	} else if (args.output_filter_given) { // (empty filter argument)
+		log_debug(
+		    "filter",
+		    "Empty output filter provided. ZMap will output all "
+		    "results, including duplicate and non-successful responses.");
+	} else {
+		log_info(
+		    "filter",
+		    "No output filter provided. ZMap will output all "
+		    "results, including duplicate and non-successful responses (e.g., "
+		    "RST and ICMP packets). If you want a filter similar to ZMap's "
+		    "default behavior, you can set an output filter similar to the "
+		    "following: --output-filter=\"success=1 && repeat=0\".");
+	}
+
 	if (args.source_ip_given) {
 		parse_source_ip_addresses(args.source_ip_arg);
 	}
@@ -804,11 +943,15 @@ int main(int argc, char *argv[])
 			}
 		}
 	}
-	if(args.batch_given){
+
+	if (args.batch_given && args.batch_arg >= 1 && args.batch_arg <= UINT16_MAX) {
 		zconf.batch = args.batch_arg;
+	} else if (args.batch_given) {
+		log_fatal("zmap", "batch size must be > 0 and <= 65535");
 	}
+
 	if (args.max_targets_given) {
-		zconf.max_targets = parse_max_hosts(args.max_targets_arg);
+		zconf.max_targets = parse_max_targets(args.max_targets_arg, zconf.ports->port_count);
 	}
 
 	// blocklist
@@ -833,28 +976,144 @@ int main(int argc, char *argv[])
 	if (!zconf.total_allowed) {
 		log_fatal("zmap", "zero eligible addresses to scan");
 	}
-	if (zconf.list_of_ips_count > 0 && 0xFFFFFFFFU / zconf.list_of_ips_count > 100000) {
-		log_warn("zmap", "list of IPs is small compared to address space. Performance will suffer, consider using an allowlist instead");
+	if (zconf.list_of_ips_count > 0 &&
+	    0xFFFFFFFFU / zconf.list_of_ips_count > 100000) {
+		log_warn(
+		    "zmap",
+		    "list of IPs is small compared to address space. Performance will suffer, consider using an allowlist instead");
 	}
 	if (zconf.max_targets) {
 		zsend.max_targets = zconf.max_targets;
 	}
+
+	// Perform network initialization before initializing
+	// PFRING and NETMAP, as they depend on the interface name
+	// being available.
+	// NETMAP will additionally break network connectivity of
+	// the host through the chosen NIC.  If one wanted to do
+	// active ARP or IPv6 ND as part of network initialization
+	// instead of just querying the kernel, that would also
+	// have to happen before NETMAP binding to the interface.
+	network_config_init();
+
+#ifdef NETMAP
+	// Initialize netmap(4) before computing number of threads,
+	// because we want to know the number of tx queues for that.
+	if (zconf.send_ip_pkts) {
+		log_fatal("zmap", "netmap does not support IP layer mode (--iplayer/-X)");
+	}
+	assert(zconf.iface);
+
+	log_warn("zmap", "netmap will disconnect the NIC from the host while zmap is executing");
+	usleep(100000);
+
+	zconf.nm.nm_fd = open(NETMAP_DEVICE_NAME, O_RDWR);
+	if (zconf.nm.nm_fd == -1) {
+		log_fatal("zmap", "netmap open(\"" NETMAP_DEVICE_NAME "\") failed: %d: %s", errno, strerror(errno));
+	}
+
+	struct nmreq_register nmrreg;
+	memset(&nmrreg, 0, sizeof(nmrreg));
+	nmrreg.nr_mode = NR_REG_ALL_NIC;
+	nmrreg.nr_flags = NR_NO_TX_POLL;
+	struct nmreq_header nmrhdr;
+	memset(&nmrhdr, 0, sizeof(nmrhdr));
+	nmrhdr.nr_version = NETMAP_API;
+	nmrhdr.nr_reqtype = NETMAP_REQ_REGISTER;
+	cross_platform_strlcpy(nmrhdr.nr_name, zconf.iface, sizeof(nmrhdr.nr_name));
+	nmrhdr.nr_body = (uint64_t)&nmrreg;
+	if (ioctl(zconf.nm.nm_fd, NIOCCTRL, &nmrhdr) == -1) {
+		log_fatal("zmap", "netmap ioctl(NIOCCTRL) failed: %d: %s", errno, strerror(errno));
+	}
+	// From this point on, the host and NIC are separated until
+	// we close the file descriptor or exit.  We _could_ pass
+	// packets unrelated to the scan up to the host and back via
+	// the host rings, but that is not currently done in order
+	// to avoid adding complexity to perf-sensitive code paths.
+
+	zconf.nm.nm_mem = mmap(NULL, nmrreg.nr_memsize, PROT_WRITE | PROT_READ, MAP_SHARED, zconf.nm.nm_fd, 0);
+	if (zconf.nm.nm_mem == MAP_FAILED) {
+		log_fatal("zmap", "netmap mmap() failed: %d: %s", errno, strerror(errno));
+	}
+	zconf.nm.nm_if = NETMAP_IF(zconf.nm.nm_mem, nmrreg.nr_offset);
+
+	log_info("zmap", "netmap bound to %s with %" PRIu32 " tx rings, %" PRIu32 " rx rings",
+		 zconf.nm.nm_if->ni_name, zconf.nm.nm_if->ni_tx_rings, zconf.nm.nm_if->ni_rx_rings);
+	for (uint32_t i = 0; i < zconf.nm.nm_if->ni_tx_rings; i++) {
+		struct netmap_ring *ring = NETMAP_TXRING(zconf.nm.nm_if, i);
+		log_debug("zmap", "tx ring %d has %" PRIu32 " slots of %" PRIu32 " bytes each",
+			  i, ring->num_slots, ring->nr_buf_size);
+	}
+	for (uint32_t i = 0; i < zconf.nm.nm_if->ni_rx_rings; i++) {
+		struct netmap_ring *ring = NETMAP_RXRING(zconf.nm.nm_if, i);
+		log_debug("zmap", "rx ring %d has %" PRIu32 " slots of %" PRIu32 " bytes each",
+			  i, ring->num_slots, ring->nr_buf_size);
+	}
+
+	// Enabling netmap mode on an interface resets PHY, which
+	// on physical NICs can take multiple seconds to complete.
+	// To avoid dropping packets while the reset is ongoing,
+	// wait for the interface to come back up here.
+	log_debug("zmap", "waiting for PHY reset to complete");
+	if_wait_for_phy_reset(zconf.iface, zconf.nm.nm_fd);
+	log_debug("zmap", "PHY reset is complete, link state is up");
+
+	if (args.netmap_wait_ping_arg != NULL) {
+		zconf.nm.wait_ping_dstip = string_to_ip_address(args.netmap_wait_ping_arg);
+	}
+#endif
+
 #ifndef PFRING
-	// Set the correct number of threads, default to num_cores - 1
+	// Set the correct number of threads, default to min(4, number of cores on host - 1, as available)
 	if (args.sender_threads_given) {
+		if (args.sender_threads_arg > 255) {
+			log_fatal("zmap", "cannot use > 255 sending threads. We advise using a sending thread per CPU "
+					  "core while reserving one core for packet receiving and monitoring. Using a large number of sender threads "
+					  "will likely decrease performance, not increase it.");
+		}
 		zconf.senders = args.sender_threads_arg;
 	} else {
-		zconf.senders = 1;
+		// use one fewer than the number of cores on the machine such that the
+		// receiver thread can use a core for processing responses
+		int available_cores = get_num_cores();
+		if (available_cores > 1) {
+			available_cores--;
+		}
+		int senders = (int) min_uint64_t(min_uint64_t(available_cores, 4), (zconf.total_allowed * zconf.ports->port_count));
+		zconf.senders = senders;
+		log_debug("zmap", "will use %i sender threads based on core availability and number of targets", senders);
 	}
+#ifdef NETMAP
+	if (zconf.senders > (int)zconf.nm.nm_if->ni_tx_rings) {
+		zconf.senders = (int)zconf.nm.nm_if->ni_tx_rings;
+		log_debug("zmap", "capping to %i sender threads based on number of TX rings", zconf.senders);
+	}
+#endif
 	if (2 * zconf.senders >= zsend.max_targets) {
 		log_warn(
 		    "zmap",
 		    "too few targets relative to senders, dropping to one sender");
 		zconf.senders = 1;
 	}
+	// reserving 1 core for the receiver/monitor thread
+	int sender_cap = get_num_cores() - 1;
+	if (sender_cap < 1) {
+		// we need at least 1 core to send
+		sender_cap = 1;
+	}
+	if (zconf.senders > sender_cap) {
+		log_warn(
+		    "zmap",
+		    "ZMap has been configured to use a larger number of sending threads (%d) than the number of "
+		    "dedicated cores (%d) that can be assigned to sending packets. We advise using a sending thread per CPU "
+		    "core while reserving one core for packet receiving and monitoring. Using a large number of sender threads "
+		    "will likely decrease performance, not increase it.",
+		    zconf.senders, get_num_cores());
+	}
 #else
 	zconf.senders = args.sender_threads_arg;
 #endif
+
 	// Figure out what cores to bind to
 	if (args.cores_given) {
 		const char **core_list = NULL;
@@ -867,7 +1126,7 @@ int main(int argc, char *argv[])
 			zconf.pin_cores[i] = atoi(core_list[i]);
 		}
 	} else {
-		int num_cores = sysconf(_SC_NPROCESSORS_ONLN);
+		int num_cores = get_num_cores();
 		zconf.pin_cores_len = (uint32_t)num_cores;
 		zconf.pin_cores =
 		    xcalloc(zconf.pin_cores_len, sizeof(uint32_t));
@@ -882,7 +1141,7 @@ int main(int argc, char *argv[])
 #define QUEUE_LEN 8192
 #define ZMAP_PF_BUFFER_SIZE 1536
 #define ZMAP_PF_ZC_CLUSTER_ID 9627
-	uint32_t user_buffers = zconf.senders * 256;
+	uint32_t user_buffers = zconf.senders * zconf.batch;
 	uint32_t queue_buffers = zconf.senders * QUEUE_LEN;
 	uint32_t card_buffers = 2 * MAX_CARD_SLOTS;
 	uint32_t total_buffers =
@@ -891,7 +1150,7 @@ int main(int argc, char *argv[])
 	uint32_t numa_node = 0; // TODO
 	zconf.pf.cluster = pfring_zc_create_cluster(
 	    ZMAP_PF_ZC_CLUSTER_ID, ZMAP_PF_BUFFER_SIZE, metadata_len,
-	    total_buffers, numa_node, NULL, NULL);
+	    total_buffers, numa_node, NULL, 0);
 	if (zconf.pf.cluster == NULL) {
 		log_fatal("zmap", "Could not create zc cluster: %s",
 			  strerror(errno));
