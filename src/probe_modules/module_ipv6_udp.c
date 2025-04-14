@@ -292,11 +292,6 @@ int ipv6_udp_make_packet(void *buf, size_t *buf_len, struct in6_addr src_ip,
 		// The buf is a stack var of our caller of size MAX_PACKET_SIZE
 		// Recalculate the payload using the loaded template
 		payload_len = ipv6_udp_template_build(udp_template, payload, MAX_UDP_PAYLOAD_LEN, ip6_header, udp_header, aes);
-		for (int i = 0; i < payload_len; i++) {
-		    printf("%02x", (unsigned char)payload[i]);
-		}
-		printf("\n");
-		log_warn("udp", "loading in UDP template substitutions '%s'\n", payload);
 		// If success is zero, the template output was truncated
 		if (payload_len <= 0) {
 			log_fatal("udp", "UDP payload template generated an empty payload");
