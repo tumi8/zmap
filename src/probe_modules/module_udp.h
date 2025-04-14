@@ -104,3 +104,8 @@ int udp_template_field_lookup(const char *vname, udp_payload_field_t *c);
 
 udp_payload_template_t *udp_template_load(uint8_t *buf, uint32_t buf_len,
 					  uint32_t *max_pkt_len);
+
+udp_payload_template_t * ipv6_udp_template_load(char *buf, unsigned int len);
+
+int ipv6_udp_template_build(udp_payload_template_t *t, char *out, unsigned int len,
+	struct ip6_hdr *ip6_header, struct udphdr *udp_hdr, aesrand_t *aes);
