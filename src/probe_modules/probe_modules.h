@@ -74,6 +74,12 @@ typedef int (*probe_make_packet_cb)(void *packetbuf, size_t *buf_len,
 				    uint32_t *validation, int probe_num,
 				    uint16_t ip_id, void *arg);
 
+typedef int (*probe_make_packet_cb_ipv6)(void *packetbuf, size_t *buf_len,
+				    struct in6_addr src_ip, struct in6_addr dst_ip,
+				    port_n_t dst_port, uint8_t ttl,
+				    uint32_t *validation, int probe_num,
+				    uint16_t ip_id, void *arg);
+
 typedef void (*probe_print_packet_cb)(FILE *, void *packetbuf);
 
 typedef int (*probe_close_cb)(struct state_conf *, struct state_send *,
@@ -106,6 +112,7 @@ typedef struct probe_module {
 	probe_thread_init_cb thread_initialize;
 	probe_prepare_packet_cb prepare_packet;
 	probe_make_packet_cb make_packet;
+	probe_make_packet_cb_ipv6 make_packet_ipv6;
 	probe_print_packet_cb print_packet;
 	probe_validate_packet_cb validate_packet;
 	probe_classify_packet_cb process_packet;

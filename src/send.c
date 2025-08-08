@@ -313,7 +313,6 @@ int send_run(sock_t st, shard_t *s)
 			log_debug("send", "send thread %hhu finished, no more target IPv6 addresses", s->thread_id);
 			goto cleanup;
 		}
-		probe_data = malloc(2*sizeof(struct in6_addr));
 		current_port = zconf.ports->ports[0];
 	} else {
 		current = shard_get_cur_target(s);
@@ -426,8 +425,6 @@ int send_run(sock_t st, shard_t *s)
 			uint32_t validation[size_of_validation];
 			// IPv6
 			if (ipv6) {
-				((struct in6_addr *) probe_data)[0] = ipv6_src;
-				((struct in6_addr *) probe_data)[1] = ipv6_dst;
 				validate_gen_ipv6(&ipv6_src, &ipv6_dst,
 				 					htons(current_port),
 					 				(uint8_t *)validation);
@@ -438,12 +435,22 @@ int send_run(sock_t st, shard_t *s)
 			}
 			uint8_t ttl = zconf.probe_ttl;
 			size_t length = 0;
-			zconf.probe_module->make_packet(
-			    batch->packets[batch->len].buf, &length,
-				src_ip, current_ip, htons(current_port), ttl, validation, i,
-				// Grab last 2 bytes of validation for ip_id
-			    (uint16_t)(validation[size_of_validation - 1] & 0xFFFF),
-			    probe_data);
+			if (ipv6) {
+				zconf.probe_module->make_packet_ipv6(
+				    batch->packets[batch->len].buf, &length,
+					ipv6_src, ipv6_dst, htons(current_port), ttl, validation, i,
+					// Grab last 2 bytes of validation for ip_id
+				    (uint16_t)(validation[size_of_validation - 1] & 0xFFFF),
+				    probe_data);
+			} else {
+				zconf.probe_module->make_packet(
+				    batch->packets[batch->len].buf, &length,
+					src_ip, current_ip, htons(current_port), ttl, validation, i,
+					// Grab last 2 bytes of validation for ip_id
+				    (uint16_t)(validation[size_of_validation - 1] & 0xFFFF),
+				    probe_data);
+			}
+
 			if (length > MAX_PACKET_SIZE) {
 				log_fatal(
 				    "send",

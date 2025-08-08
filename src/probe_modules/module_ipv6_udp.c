@@ -38,12 +38,12 @@
 
 static char *udp_send_msg = NULL;
 static int udp_send_msg_len = 0;
-//static int udp_send_substitutions = 0;
+static int udp_send_substitutions = 0;
 static udp_payload_template_t *udp_template = NULL;
 
 static const char *udp_send_msg_default = "GET / HTTP/1.1\r\nHost: www\r\n\r\n";
 
-/*
+
 const char *udp_unreach_strings[] = {
 	"network unreachable",
 	"host unreachable",
@@ -61,7 +61,7 @@ const char *udp_unreach_strings[] = {
 	"communication admin. prohibited",
 	"host presdence violation",
 	"precedence cutoff"
-};*/
+};
 
 const char *ipv6_udp_usage_error =
 	"unknown UDP probe specification (expected file:/path or text:STRING or hex:01020304 or template:/path or template-fields)";
@@ -180,11 +180,8 @@ int ipv6_udp_global_initialize(struct state_conf *conf) {
 		fclose(inp);
 
 		if (strcmp(args, "template") == 0) {
-			// TODO FIXME: Templates in IPv6 are not yet supported
-			log_fatal("udp", "templates not yet supported in IPv6!");
-/*			udp_send_substitutions = 1;
-			udp_template = udp_template_load(udp_send_msg, udp_send_msg_len);
-			*/
+			udp_send_substitutions = 1;
+			udp_template = ipv6_udp_template_load(udp_send_msg, udp_send_msg_len);
 		}
 
 	} else if (strcmp(args, "hex") == 0) {
@@ -268,23 +265,21 @@ int ipv6_udp_prepare_packet(void *buf, macaddr_t *src, macaddr_t *gw, UNUSED voi
 	return EXIT_SUCCESS;
 }
 
-int ipv6_udp_make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t src_ip,
-		UNUSED ipaddr_n_t dst_ip, port_n_t dport, uint8_t ttl, uint32_t *validation, int probe_num, UNUSED uint16_t ip_id, void *arg)
+int ipv6_udp_make_packet(void *buf, size_t *buf_len, struct in6_addr src_ip,
+		struct in6_addr dst_ip, port_n_t dport, uint8_t ttl, uint32_t *validation, int probe_num, UNUSED uint16_t ip_id, void *arg)
 {
 	// From module_ipv6_udp_dns
 	struct ether_header *eth_header = (struct ether_header *) buf;
 	struct ip6_hdr *ip6_header = (struct ip6_hdr*) (&eth_header[1]);
 	struct udphdr *udp_header= (struct udphdr *) &ip6_header[1];
 
-	ip6_header->ip6_src = ((struct in6_addr *) arg)[0];
-	ip6_header->ip6_dst = ((struct in6_addr *) arg)[1];
+	ip6_header->ip6_src = src_ip;
+	ip6_header->ip6_dst = dst_ip;
 	ip6_header->ip6_ctlun.ip6_un1.ip6_un1_hlim = ttl;
 	udp_header->uh_sport = htons(get_src_port(num_ports, probe_num,
 				     validation));
 	udp_header->uh_dport = dport;
 
-	// TODO FIXME
-/*
 	if (udp_send_substitutions) {
 		char *payload = (char *) &udp_header[1];
 		int payload_len = 0;
@@ -308,10 +303,10 @@ int ipv6_udp_make_packet(void *buf, size_t *buf_len, UNUSED ipaddr_n_t src_ip,
 		ip6_header->ip6_ctlun.ip6_un1.ip6_un1_plen = htons(sizeof(struct udphdr) + payload_len);
 		udp_header->uh_ulen = ntohs(sizeof(struct udphdr) + payload_len);
 	}
-*/
+
 	udp_header->uh_sum = 0;
 	udp_header->uh_sum = ipv6_payload_checksum(ntohs(udp_header->uh_ulen), &ip6_header->ip6_src, &ip6_header->ip6_dst, (unsigned short *) udp_header, IPPROTO_UDP);
-	
+
 	size_t headers_len = sizeof(struct ether_header) + sizeof(struct ip6_hdr) +
 			     sizeof(struct udphdr);
 	*buf_len = headers_len + udp_send_msg_len;
@@ -472,11 +467,30 @@ void ipv6_udp_template_free(udp_payload_template_t *t)
 int ipv6_udp_random_bytes(char *dst, int len, const unsigned char *charset,
 		int charset_len, aesrand_t *aes) {
 	int i;
-	for(i=0; i<len; i++)
-		*dst++ = charset[ (aesrand_getword(aes) & 0xFFFFFFFF) % charset_len ];
+	for(i=0; i<len; i++) {
+		*dst = charset[ (aesrand_getword(aes) & 0xFFFFFFFF) % charset_len ];
+		dst++;
+	}
 	return i;
 }
-/*
+
+// Function to expand IPv6 address
+void expand_ipv6_address(const struct in6_addr *addr, char *expanded, size_t size) {
+    char tmp[INET6_ADDRSTRLEN];
+    inet_ntop(AF_INET6, addr, tmp, sizeof(tmp));
+
+    // Expand the IPv6 address
+    unsigned int blocks[8] = {0};
+    sscanf(tmp, "%x:%x:%x:%x:%x:%x:%x:%x",
+           &blocks[0], &blocks[1], &blocks[2], &blocks[3],
+           &blocks[4], &blocks[5], &blocks[6], &blocks[7]);
+
+    snprintf(expanded, size,
+             "%04x:%04x:%04x:%04x:%04x:%04x:%04x:%04x",
+             blocks[0], blocks[1], blocks[2], blocks[3],
+             blocks[4], blocks[5], blocks[6], blocks[7]);
+}
+
 int ipv6_udp_template_build(udp_payload_template_t *t, char *out, unsigned int len,
 	struct ip6_hdr *ip6_header, struct udphdr *udp_hdr, aesrand_t *aes)
 {
@@ -484,6 +498,7 @@ int ipv6_udp_template_build(udp_payload_template_t *t, char *out, unsigned int l
 	char *p;
 	char *max;
 	char tmp[256];
+	char expanded[40]; // Buffer for the expanded IPv6 address
 	int full = 0;
 	unsigned int x, y;
 	uint32_t *u32;
@@ -532,46 +547,44 @@ int ipv6_udp_template_build(udp_payload_template_t *t, char *out, unsigned int l
 
 			// TODO: Condense these case statements to remove redundant code
 			case UDP_SADDR_A:
-				if ( p + 15 >= max) {
+				if ( p + 39 >= max) { // Maximum IPv6 string length is 39
 					full = 1;
 					break;
 				}
 				// Write to stack and then memcpy in order to properly track length
-				inet_ntop(AF_INET, (char *)&ip_hdr->ip_src, tmp, sizeof(tmp)-1);
-				memcpy(p, tmp, strlen(tmp));
-				p += strlen(tmp);
+				expand_ipv6_address(&ip6_header->ip6_src, expanded, sizeof(expanded));
+				memcpy(p, expanded, 39);
+				p += 39;
 				break;
 
 			case UDP_DADDR_A:
-				if ( p + 15 >= max) {
+				if ( p + 39 >= max) { // Maximum IPv6 string length is 39
 					full = 1;
 					break;
 				}
 				// Write to stack and then memcpy in order to properly track length
-				inet_ntop(AF_INET, (char *)&ip_hdr->ip_dst, tmp, sizeof(tmp)-1);
-				memcpy(p, tmp, strlen(tmp));
-				p += strlen(tmp);
+				expand_ipv6_address(&ip6_header->ip6_dst, expanded, sizeof(expanded));
+				memcpy(p, expanded, 39);
+				p += 39;
 				break;
 
 			case UDP_SADDR_N:
-				if ( p + 4 >= max) {
+				if ( p + 16 >= max) {
 					full = 1;
 					break;
 				}
 
-				u32 = (uint32_t *)p;
-				*u32 = ip_hdr->ip_src.s_addr;
-				p += 4;
+				memcpy(p, ip6_header->ip6_src.s6_addr, 16);
+				p += 16;
 				break;
 
 			case UDP_DADDR_N:
-				if ( p + 4 >= max) {
+				if ( p + 16 >= max) {
 					full = 1;
 					break;
 				}
-				u32 = (uint32_t *)p;
-				*u32 = ip_hdr->ip_dst.s_addr;
-				p += 4;
+				memcpy(p, ip6_header->ip6_dst.s6_addr, 16);
+				p += 16;
 				break;
 
 			case UDP_SPORT_N:
@@ -757,7 +770,7 @@ udp_payload_template_t * ipv6_udp_template_load(char *buf, unsigned int len)
 
 	return t;
 }
-*/
+
 static fielddef_t fields[] = {
 	{.name = "classification", .type="string", .desc = "packet classification"},
 	{.name = "success", .type="int", .desc = "is response considered success"},
@@ -780,7 +793,7 @@ probe_module_t module_ipv6_udp = {
 	.thread_initialize = &ipv6_udp_init_perthread,
 	.global_initialize = &ipv6_udp_global_initialize,
 	.prepare_packet = &ipv6_udp_prepare_packet,
-	.make_packet = &ipv6_udp_make_packet,
+	.make_packet_ipv6 = &ipv6_udp_make_packet,
 	.print_packet = &ipv6_udp_print_packet,
 	.validate_packet = &_ipv6_udp_validate_packet,
 	.process_packet = &ipv6_udp_process_packet,
